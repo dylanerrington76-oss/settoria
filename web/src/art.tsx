@@ -200,12 +200,19 @@ export function shade(hex: string, amt: number): string {
 export const isVeryDark = (color: string): boolean => luminance(color) < 0.02;
 export const pieceEdge = (color: string): string => (isVeryDark(color) ? '#f4f4f4' : '#0b0b0b');
 
-/** Settlement / city draw */
+/**
+ * Settlement: a chunky wooden block like the physical piece, a gabled house seen from the front-left so
+ * three faces show (front, shaded side wall, lit roof slope). It spans x -14..15, y -16..15.
+ * The city keeps its own, earlier drawing.
+ */
 export function PieceShape({ color, city }: { color: string; city?: boolean }) {
   const roof = shade(color, 0.22);
   const wall = shade(color, -0.12);
+  const lit = shade(color, 0.2);
+  const side = shade(color, -0.24);
   const edge = pieceEdge(color);
   const door = isVeryDark(color) ? '#8c8c8c' : '#101010';
+  const gloss = { fill: 'none', stroke: '#fff', strokeOpacity: 0.4, strokeWidth: 2, strokeLinecap: 'round' as const };
   if (city) {
     return (
       <g strokeLinejoin="round" stroke={edge} strokeWidth="2">
@@ -220,12 +227,13 @@ export function PieceShape({ color, city }: { color: string; city?: boolean }) {
     );
   }
   return (
-    <g strokeLinejoin="round" stroke={edge} strokeWidth="1.9">
-      <path d="M-15 15 V-1 L-4 -14 L15 -3 V15Z" fill={color} />
-      <path d="M-15 15 V-1 L-4 -14 L-1 -12 V15Z" fill="#fff" opacity=".3" stroke="none" />
-      <path d="M-4 -14 L15 -3 V15 H-1Z" fill="#000" opacity=".14" stroke="none" />
-      <path d="M-15 -1 L-1 -12 L15 -3" fill="none" strokeWidth="1.2" opacity=".5" />
-      <path d="M-3.6 15 V8.5 Q-0.6 5 2.6 8.5 V15Z" fill={door} stroke="none" />
+    <g strokeLinejoin="round" stroke={edge} strokeWidth="1.8">
+      <path d="M4 15 L15 10 V-4 L4 1Z" fill={side} />
+      <path d="M-5 -11 L6 -16 L15 -4 L4 1Z" fill={lit} />
+      <path d="M-14 15 V1 L-5 -11 L4 1 V15Z" fill={color} />
+      <path d="M-12 13.5 V1.8 L-6.5 -5.5" {...gloss} />
+      <path d="M-8.4 15 V9.2 Q-5 5.2 -1.6 9.2 V15Z" fill={door} stroke="none" />
+      <path d="M7.5 10 L11.5 8 V3.5 L7.5 5.5Z" fill="#fff" fillOpacity=".55" stroke="none" />
     </g>
   );
 }

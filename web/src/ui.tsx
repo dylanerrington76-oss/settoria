@@ -234,9 +234,8 @@ export function TradeModal({
           {duplicate && !clash && <p className="warn">You already have that offer open.</p>}
           {full && <p className="warn">You can have at most {MAX_OPEN_TRADES} offers open at once.</p>}
           <p className="muted">
-            Offers go to every player. You can send several; each is answered separately and you complete the ones you like.
             {open.length > 0 && ` Open offers: ${open.length}/${MAX_OPEN_TRADES}.`}
-            {sent && ' Offer sent. Build another or close this window.'}
+            {sent && ' Offer sent'}
           </p>
           <div className="modal-actions">
             <button onClick={onClose}>{open.length > 0 || sent ? 'Done' : 'Cancel'}</button>
@@ -260,7 +259,6 @@ export function TradeModal({
           <ResourceButtons selected={bGive} onPick={setBGive} disabled={(i) => v.hand[i] < v.ratios[i]} label={(i) => `${v.ratios[i]}:1`} />
           <h3>Get 1</h3>
           <ResourceButtons selected={bGet} onPick={setBGet} disabled={(i) => i === bGive || v.bank[i] === 0} label={(i) => `bank ${v.bank[i]}`} />
-          <p className="muted">A bank trade adds {TRADE_BONUS_SECS}s to your turn clock (never above the starting time).</p>
           <div className="modal-actions">
             <button onClick={onClose}>Close</button>
             <button
@@ -792,11 +790,11 @@ function describe(e: LogEvent, v: GameView): ReactNode {
         </>
       );
     case 'longest_road_taken':
-      return ` takes Longest Road (${e.roads} roads)`;
+      return ` takes Longest Road`;
     case 'longest_road_lost':
       return 'Nobody holds Longest Road now';
     case 'largest_army_taken':
-      return ` takes Largest Army (${e.knights} knights)`;
+      return ` takes Largest Army`;
     case 'won':
       return ` wins with ${e.points} victory points!`;
     case 'timed_out':

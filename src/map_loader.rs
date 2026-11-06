@@ -16,9 +16,8 @@ use std::path::Path;
 /// Where maps are read from at startup unless `MAPS_DIR` says otherwise.
 pub const DEFAULT_MAPS_DIR: &str = "maps";
 
-/// The most files read from the maps folder. The lobby sends the whole list of maps to every player each
-/// time it changes, so the list is kept to a size that is cheap to send.
-pub const MAX_FOLDER_FILES: usize = 100;
+/// The most files read from the maps folder.
+pub const MAX_FOLDER_FILES: usize = 10;
 
 /// The most issues written to the log for one file (a hopeless file can have a hundred).
 const LOGGED_ISSUES: usize = 20;
@@ -48,7 +47,6 @@ pub enum AddError {
 }
 
 impl AddError {
-    /// The issues to show, whichever kind of problem it was.
     pub fn issues(self) -> Vec<String> {
         match self {
             AddError::Invalid(issues) => issues,
@@ -80,7 +78,6 @@ fn check_text(text: &str) -> Result<(MapDef, Vec<String>), Vec<String>> {
 }
 
 /// Check a map's JSON and, if it is a good map, add it to the registry.
-///
 /// `id_hint` is what the id is made from (a file's name without `.json`); `None` makes it from the map's
 /// name. A taken id or name gets a number (see `MapRegistry::add_unique`). The checking, which can take a
 /// moment on a big map, happens before the registry's lock is taken; the lock is held only to add the entry.

@@ -1,15 +1,4 @@
 //! Structured entries for the game log.
-//!
-//! The server records *what happened* as data (`LogEvent`), and the client decides how to
-//! show it (words, icons, colours). Nothing on the client parses sentences any more, so the
-//! wording of a message can change freely without breaking the UI.
-//!
-//! On the wire each event is a JSON object tagged with its snake_case variant name, e.g.
-//! `{"type":"rolled","player":2,"dice":[3,4]}`. The matching TypeScript union is `LogEvent`
-//! in `web/src/types.ts`; keep the two in step when adding or changing a variant.
-//!
-//! Conventions: `player` is always the seat id of whoever the entry is about (the actor), and
-//! resources are indices into the usual brick/lumber/ore/grain/wool order.
 
 use crate::board::Res;
 use crate::game::ClockKind;
@@ -21,7 +10,6 @@ pub enum LogEvent {
     // ---- game and setup ----------------------------------------------------
     GameStarted,
     /// Only logged for maps other than the standard one.
-    /// The game is on a map other than the standard one: its id, and the name to show people.
     MapChosen { map: String, name: String },
     /// Human-readable labels for every rule that differs from the standard (see `Settings::changes`).
     CustomRules { changes: Vec<String> },

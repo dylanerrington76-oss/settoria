@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { Glyph, PieceShape, pieceEdge, shade } from './art';
+import { Glyph, PieceShape, isVeryDark, pieceEdge, shade } from './art';
 import { GameView, Terrain } from './types';
 
 const S = 64; // pixels per hex radius (board units are multiples of this)
@@ -35,6 +35,93 @@ function hexPoints(cx: number, cy: number, r: number): string {
       return `${(cx + r * Math.cos(a)).toFixed(1)},${(cy + r * Math.sin(a)).toFixed(1)}`;
     })
     .join(' ');
+}
+
+/** Width of a road across, outline included, in board units (`S` is one hex radius). */
+const ROAD_W = 11;
+/** Thickness of the dark outline that runs round every road piece. */
+const ROAD_LINE = 1.4;
+
+interface RoadShape {
+  edge: number;
+  owner: number;
+  /** Corner points of the road, already cut to meet its neighbours. */
+  pts: [number, number][];
+  /** Start and end of the line across the road that the colour gradient follows. */
+  across: [number, number, number, number];
+}
+
+/**
+ * The outline of every road on the board. A road runs the whole way from vertex to vertex, and where
+ * several of one player's roads meet their ends are cut along the line between them (a mitre), so
+ * a chain reads as one continuous road with just a thin seam at each joint, as in the board game.
+ */
+function roadShapes(board: BoardData, roads: GameView['roads']): RoadShape[] {
+  const h = (ROAD_W - ROAD_LINE) / 2; // the outline is stroked on the edge of the polygon
+  const TAU = Math.PI * 2;
+  // per (vertex, owner): the direction in which each of that owner's roads leaves the vertex
+  const ends = new Map<string, { edge: number; vertex: number; ang: number }[]>();
+  const add = (vertex: number, owner: number, edge: number, ang: number) => {
+    const k = `${vertex}|${owner}`;
+    const list = ends.get(k) ?? [];
+    list.push({ edge, vertex, ang: ((ang % TAU) + TAU) % TAU });
+    ends.set(k, list);
+  };
+  board.edges.forEach((e, i) => {
+    const owner = roads[i];
+    if (owner === null || owner === undefined) return;
+    const a = board.vertices[e.a];
+    const b = board.vertices[e.b];
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    add(e.a, owner, i, ang);
+    add(e.b, owner, i, ang + Math.PI);
+  });
+
+  // the two corners of each road end: on its "turning-up" side (asc) and its other side (desc)
+  const corner = new Map<string, { asc: [number, number]; desc: [number, number] }>();
+  for (const list of ends.values()) {
+    list.sort((p, q) => p.ang - q.ang);
+    const n = list.length;
+    list.forEach((it, j) => {
+      const v = board.vertices[it.vertex];
+      const vx = v.x * S;
+      const vy = v.y * S;
+      // a corner sits on the bisector of the gap to the neighbouring road, h / sin(half the gap) from the vertex
+      const at = (gap: number, dir: number): [number, number] => {
+        const d = h / Math.max(0.5, Math.abs(Math.sin(gap / 2)));
+        return [vx + Math.cos(dir) * d, vy + Math.sin(dir) * d];
+      };
+      let asc: [number, number];
+      let desc: [number, number];
+      if (n === 1) {
+        asc = [vx - Math.sin(it.ang) * h, vy + Math.cos(it.ang) * h];
+        desc = [vx + Math.sin(it.ang) * h, vy - Math.cos(it.ang) * h];
+      } else {
+        const next = list[(j + 1) % n];
+        const prev = list[(j + n - 1) % n];
+        const gUp = (next.ang - it.ang + TAU) % TAU;
+        const gDown = (it.ang - prev.ang + TAU) % TAU;
+        asc = at(gUp, it.ang + gUp / 2);
+        desc = at(gDown, it.ang - gDown / 2);
+      }
+      corner.set(`${it.edge}|${it.vertex}`, { asc, desc });
+    });
+  }
+
+  const out: RoadShape[] = [];
+  board.edges.forEach((e, i) => {
+    const owner = roads[i];
+    if (owner === null || owner === undefined) return;
+    const A = corner.get(`${i}|${e.a}`);
+    const B = corner.get(`${i}|${e.b}`);
+    if (!A || !B) return;
+    // seen from end A the asc side is the same physical side of the road as B's desc side
+    const mid = (p: [number, number], q: [number, number]): [number, number] => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+    const lo = mid(A.desc, B.asc);
+    const hi = mid(A.asc, B.desc);
+    out.push({ edge: i, owner, pts: [A.asc, B.desc, B.asc, A.desc], across: [lo[0], lo[1], hi[0], hi[1]] });
+  });
+  return out;
 }
 
 interface Props {
@@ -382,34 +469,27 @@ export default function Board({ view, vertexTargets, edgeTargets, hexTargets, sh
       <BoardStatic board={board} geo={geo} showPips={showPips} />
 
       {/* roads */}
-      {board.edges.map((e, i) => {
-        const owner = view.roads[i];
-        if (owner === null || owner === undefined) return null;
-        const a = board.vertices[e.a];
-        const b = board.vertices[e.b];
-        const dx = (b.x - a.x) * S;
-        const dy = (b.y - a.y) * S;
-        const len = Math.hypot(dx, dy);
-        const ux = dx / len;
-        const uy = dy / len;
-        const x1 = a.x * S + ux * 8;
-        const y1 = a.y * S + uy * 8;
-        const x2 = b.x * S - ux * 8;
-        const y2 = b.y * S - uy * 8;
-        const col = view.players[owner].color;
-        // light stripe on the upper side, dark stripe on the lower side: a bevelled plank
-        let px = -uy;
-        let py = ux;
-        if (py > 0) {
-          px = -px;
-          py = -py;
-        }
+      {roadShapes(board, view.roads).map((r) => {
+        const col = view.players[r.owner].color;
+        const dark = isVeryDark(col);
+        const outline = dark ? pieceEdge(col) : shade(col, -0.8);
         return (
-          <g key={i} filter="url(#drop)">
-            <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={pieceEdge(col)} strokeWidth={15.5} strokeLinecap="butt" />
-            <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={col} strokeWidth={11.6} strokeLinecap="butt" />
-            <line x1={x1 - px * 4.2} y1={y1 - py * 4.2} x2={x2 - px * 4.2} y2={y2 - py * 4.2} stroke={shade(col, -0.35)} strokeWidth={4.6} strokeLinecap="butt" opacity=".7" />
-            <line x1={x1 + px * 3.4} y1={y1 + py * 3.4} x2={x2 + px * 3.4} y2={y2 + py * 3.4} stroke={shade(col, 0.5)} strokeWidth={3.4} strokeLinecap="butt" opacity=".85" />
+          <g key={r.edge}>
+            <linearGradient id={`road-${r.edge}`} gradientUnits="userSpaceOnUse" x1={r.across[0]} y1={r.across[1]} x2={r.across[2]} y2={r.across[3]}>
+              <stop offset="0" stopColor={shade(col, 0.45)} />
+              <stop offset="0.28" stopColor={shade(col, 0.12)} />
+              <stop offset="0.55" stopColor={shade(col, dark ? 0.1 : -0.3)} />
+              <stop offset="0.82" stopColor={col} />
+              <stop offset="1" stopColor={shade(col, 0.35)} />
+            </linearGradient>
+            <polygon
+              points={r.pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')}
+              fill={`url(#road-${r.edge})`}
+              stroke={outline}
+              strokeWidth={ROAD_LINE}
+              strokeLinejoin="miter"
+              strokeMiterlimit={4}
+            />
           </g>
         );
       })}
