@@ -6,6 +6,8 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: {
+    // The changelog page reads ../docs/Changelog.md, which is outside this folder.
+    fs: { allow: ['..'] },
     proxy: {
       '/ws': { target: 'ws://localhost:3000', ws: true },
       '/api': 'http://localhost:3000',

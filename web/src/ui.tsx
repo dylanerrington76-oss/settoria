@@ -37,7 +37,6 @@ import {
   TIMER_MODES,
   total,
   Trade,
-  TRADE_BONUS_SECS,
 } from './types';
 import { changedCount, settingsRows } from './GameSettings';
 

@@ -130,12 +130,12 @@ function pieces(extra: boolean) {
 
 const pv = (id: number, cards: number, vp: number, road: number, left: [number, number, number], knights = 0) => ({
   id, name: NAMES[id], color: PALETTE[[5, 4, 3, 0][id]].hex, connected: true, cards, dev_cards: 0, knights,
-  roads_left: left[0], settlements_left: left[1], cities_left: left[2], vp, longest_road: road, vp_total: null,
+  roads_left: left[0], settlements_left: left[1], cities_left: left[2], vp, longest_road: road, vp_total: null, vp_breakdown: null,
 });
 
 function base(): GameView {
   return {
-    you: 0, board, phase: 'setup', current: 0, rolled: false, dice: null, robber: board.desert,
+    you: 0, board, phase: 'setup', current: 0, rolled: false, dice: null, roll_counts: Array(11).fill(0), robber: board.desert,
     buildings: board.vertices.map(() => null), roads: board.edges.map(() => null),
     players: [pv(0, 0, 0, 0, [15, 5, 4]), pv(1, 0, 0, 0, [15, 5, 4]), pv(2, 0, 0, 0, [15, 5, 4]), pv(3, 0, 0, 0, [15, 5, 4])],
     hand: [0, 0, 0, 0, 0], dev: [0, 0, 0, 0, 0], dev_new: [0, 0, 0, 0, 0], vp_you: 0,
@@ -220,6 +220,22 @@ export function fixture(name: string): { view: GameView; clock?: number } {
         ? { kind: 'steal', player: 0, remaining_ms: 11_000, total_ms: 15_000 }
         : { kind: 'turn', player: 0, remaining_ms: 83_000, total_ms: 120_000 };
     return { view: v, clock: name === 'steal' ? 11 : 83 };
+  }
+  if (name === 'over') {
+    // A finished game: the end screen with the dice-roll chart (?s=over).
+    v.phase = 'game_over';
+    v.rolled = true;
+    v.dice = [4, 3];
+    v.winner = 0;
+    v.roll_counts = [2, 5, 8, 11, 14, 17, 15, 12, 9, 4, 3];
+    const parts: [number, number, number, number, number][] = [
+      [3, 4, 1, 0, 2], [2, 6, 0, 0, 0], [3, 4, 0, 0, 0], [2, 2, 0, 2, 0], // settlements, cities, dev cards, army, road
+    ];
+    v.players = [pv(0, 5, 10, 4, [9, 1, 2], 3), pv(1, 5, 8, 2, [11, 2, 3]), pv(2, 6, 7, 1, [12, 2, 3]), pv(3, 3, 6, 2, [12, 3, 3])].map((p, i) => {
+      const [settlements, cities, dev_cards, largest_army, longest_road] = parts[i];
+      return { ...p, vp_total: p.vp, vp_breakdown: { settlements, cities, dev_cards, largest_army, longest_road } };
+    });
+    return { view: v };
   }
   throw new Error('unknown fixture ' + name);
 }

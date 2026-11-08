@@ -1,6 +1,8 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ActionIcon, Avatar, Chevron, DieFace, ToolIcon } from './art';
 import Board from './Board';
+import Changelog from './Changelog';
+import Footer from './Footer';
 import { GameSettingsPanel, settingsDifferences } from './GameSettings';
 import {
   BankRow,
@@ -17,6 +19,7 @@ import {
   TradeBanners,
   TradeModal,
 } from './ui';
+import { useRoute } from './route';
 import { useGame } from './useGame';
 import {
   colorName,
@@ -47,6 +50,10 @@ type Dialog = null | 'trade' | 'plenty' | 'monopoly' | 'rules' | 'info' | 'setti
 
 export default function App() {
   const { screen, error, online, name, send, join, leave } = useGame();
+  const { changelog, go } = useRoute();
+
+  // The game connection above stays open while the changelog is showing, so going back finds the lobby as it was.
+  if (changelog) return <Changelog onBack={() => go('app')} />;
 
   let body;
   if (screen.kind === 'game') {
@@ -69,7 +76,14 @@ export default function App() {
 
   return (
     <>
-      {body}
+      {screen.kind === 'game' ? (
+        body
+      ) : (
+        <div className="entry">
+          {body}
+          <Footer onChangelog={() => go('changelog')} />
+        </div>
+      )}
       {error && (
         <div className="toast" role="alert">
           {error}
@@ -413,6 +427,8 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
   const [pips, setPips] = useState(true);
   const [logOpen, setLogOpen] = useState(true);
   const [pick, setPick] = useState<Res>([0, 0, 0, 0, 0]);
+  /** After the game: the stats screen (true) or the board (false). */
+  const [statsOpen, setStatsOpen] = useState(true);
 
   const mine = v.current === v.you;
   const main = mine && v.phase === 'main';
@@ -662,8 +678,47 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
       {dialog === 'rules' && <RulesDialog settings={v.settings} onClose={() => setDialog(null)} />}
       {dialog === 'info' && <InfoDialog v={v} onClose={() => setDialog(null)} />}
       {dialog === 'settings' && <SettingsDialog pips={pips} onPips={setPips} onFullscreen={toggleFull} onClose={() => setDialog(null)} />}
-      {v.phase === 'game_over' && <GameOver v={v} send={send} />}
+      {v.phase === 'game_over' && (
+        <>
+          {statsOpen && <GameOver v={v} send={send} />}
+          <button className="stats-toggle" onClick={() => setStatsOpen(!statsOpen)}>
+            {statsOpen ? 'Map' : 'Stats'}
+          </button>
+        </>
+      )}
     </div>
+  );
+}
+
+/** Bar chart of how often each dice total (2 to 12) came up this game, under the total number of rolls. */
+function RollChart({ counts }: { counts: number[] }) {
+  const total = counts.reduce((a, b) => a + b, 0);
+  const max = Math.max(1, ...counts);
+  const summary = counts.map((n, i) => `${i + 2}: ${n}`).join(', ');
+  return (
+    <section className="rolls" aria-label="Dice rolls">
+      <div className="rolls-total">
+        <b>{total}</b> {total === 1 ? 'dice roll' : 'dice rolls'} in total
+      </div>
+      {total > 0 ? (
+        <>
+          <div className="rolls-chart" role="img" aria-label={`Number of times each dice total was rolled. ${summary}.`}>
+            {counts.map((n, i) => (
+              <div key={i} className="rolls-col">
+                <div className="rolls-plot">
+                  <span className="rolls-n">{n}</span>
+                  {n > 0 && <div className="rolls-bar" style={{ height: `max(3px, calc((100% - 18px) * ${n / max}))` }} />}
+                </div>
+                <span className="rolls-x">{i + 2}</span>
+              </div>
+            ))}
+          </div>
+          <p className="rolls-axis">Dice total</p>
+        </>
+      ) : (
+        <p className="muted">No dice were rolled.</p>
+      )}
+    </section>
   );
 }
 
@@ -672,15 +727,43 @@ function GameOver({ v, send }: { v: GameView; send: Send }) {
   const ranked = [...v.players].sort((a, b) => (b.vp_total ?? 0) - (a.vp_total ?? 0));
   return (
     <Modal title={winner ? `${winner.name} wins!` : 'Game over'}>
-      <div className="final" style={{ borderColor: winner ? winner.color : undefined }}>
-        {ranked.map((p) => (
-          <div key={p.id} className="final-row">
-            <Chip color={p.color} />
-            <span>{p.name}</span>
-            <b>{p.vp_total ?? p.vp} points</b>
-          </div>
-        ))}
+      <div className="final-scroll">
+        <table className="final-table" style={{ borderColor: winner ? winner.color : undefined }}>
+          <thead>
+            <tr>
+              <th scope="col">Player</th>
+              <th scope="col">Total points</th>
+              <th scope="col">Settlements</th>
+              <th scope="col">Cities</th>
+              <th scope="col">Dev cards</th>
+              <th scope="col">Largest army</th>
+              <th scope="col">Longest road</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ranked.map((p) => {
+              const b = p.vp_breakdown;
+              return (
+                <tr key={p.id}>
+                  <th scope="row">
+                    <div className="who">
+                      <Chip color={p.color} />
+                      <span>{p.name}</span>
+                    </div>
+                  </th>
+                  <td className="total">{p.vp_total ?? p.vp}</td>
+                  <td>{b?.settlements ?? '–'}</td>
+                  <td>{b?.cities ?? '–'}</td>
+                  <td>{b?.dev_cards ?? '–'}</td>
+                  <td>{b?.largest_army ?? '–'}</td>
+                  <td>{b?.longest_road ?? '–'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
+      <RollChart counts={v.roll_counts} />
       <p className="muted">Nothing is saved. Start again for a fresh board.</p>
       <div className="modal-actions">
         <button className="primary" onClick={() => send({ type: 'reset' })}>

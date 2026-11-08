@@ -382,6 +382,9 @@ pub struct Game {
     pub current: usize,
     pub rolled: bool,
     pub dice: Option<(u8, u8)>,
+    /// How many times each dice total has been rolled this game: index `i` counts totals of `i + 2`
+    /// (so 11 entries, for 2 through 12). Kept here rather than read back from the log, which is capped.
+    pub roll_counts: [u32; 11],
     pub dev_played: bool,
     pub setup_idx: usize,
     pub setup_vertex: Option<usize>,
@@ -416,6 +419,18 @@ pub struct Legal {
     pub hexes: Vec<usize>,
 }
 
+/// Where a player's points came from, already multiplied by the game's point values
+/// (so the five parts add up to `Game::vp_total`).
+#[derive(Serialize, Debug, PartialEq, Eq)]
+pub struct VpBreakdown {
+    pub settlements: usize,
+    pub cities: usize,
+    /// Victory Point cards, hidden until the game is over.
+    pub dev_cards: usize,
+    pub largest_army: usize,
+    pub longest_road: usize,
+}
+
 #[derive(Serialize)]
 pub struct PlayerView {
     pub id: usize,
@@ -433,6 +448,8 @@ pub struct PlayerView {
     pub longest_road: usize,
     /// Revealed to everyone once the game is over.
     pub vp_total: Option<usize>,
+    /// Where `vp_total` came from; revealed together with it.
+    pub vp_breakdown: Option<VpBreakdown>,
 }
 
 #[derive(Serialize)]
@@ -444,6 +461,8 @@ pub struct GameView<'a> {
     pub current: usize,
     pub rolled: bool,
     pub dice: Option<(u8, u8)>,
+    /// Times each total (2 to 12) has been rolled this game; see `Game::roll_counts`.
+    pub roll_counts: [u32; 11],
     pub robber: usize,
     pub buildings: &'a [Option<Building>],
     pub roads: &'a [Option<usize>],
@@ -600,6 +619,7 @@ impl Game {
             current: order[0],
             rolled: false,
             dice: None,
+            roll_counts: [0; 11],
             dev_played: false,
             setup_idx: 0,
             setup_vertex: None,
@@ -888,6 +908,29 @@ impl Game {
         vp
     }
 
+    /// The parts of `vp_total(p)`: points from settlements, cities, Victory Point cards and the two awards.
+    pub fn vp_breakdown(&self, p: usize) -> VpBreakdown {
+        let (mut settlements, mut cities) = (0, 0);
+        for b in self.buildings.iter().flatten() {
+            if b.owner == p {
+                if b.city {
+                    cities += self.settings.city_points as usize;
+                } else {
+                    settlements += self.settings.settlement_points as usize;
+                }
+            }
+        }
+        let pl = &self.players[p];
+        let cards = pl.dev[VICTORY_POINT] as usize + pl.dev_new[VICTORY_POINT] as usize;
+        VpBreakdown {
+            settlements,
+            cities,
+            dev_cards: cards * self.settings.vp_card_points as usize,
+            largest_army: if self.largest_army_holder == Some(p) { self.settings.largest_army_points as usize } else { 0 },
+            longest_road: if self.longest_road_holder == Some(p) { self.settings.longest_road_points as usize } else { 0 },
+        }
+    }
+
     pub fn vp_total(&self, p: usize) -> usize {
         let pl = &self.players[p];
         let cards = pl.dev[VICTORY_POINT] as usize + pl.dev_new[VICTORY_POINT] as usize;
@@ -1023,6 +1066,7 @@ impl Game {
         let d = (rng.gen_range(1..=6u8), rng.gen_range(1..=6u8));
         let total = d.0 + d.1;
         self.dice = Some(d);
+        self.roll_counts[usize::from(total) - 2] += 1;
         self.rolled = true;
         self.log(LogEvent::Rolled { player: self.current, dice: d });
         self.resolve_roll(total);
@@ -1764,6 +1808,7 @@ impl Game {
                     vp: self.vp_public(i),
                     longest_road: self.longest_road(i),
                     vp_total: if over { Some(self.vp_total(i)) } else { None },
+                    vp_breakdown: if over { Some(self.vp_breakdown(i)) } else { None },
                 }
             })
             .collect();
@@ -1777,6 +1822,7 @@ impl Game {
             current: self.current,
             rolled: self.rolled,
             dice: self.dice,
+            roll_counts: self.roll_counts,
             robber: self.robber,
             buildings: &self.buildings,
             roads: &self.roads,
@@ -2477,6 +2523,24 @@ mod tests {
     }
 
     #[test]
+    fn every_roll_is_counted_by_its_total() {
+        let t0 = Instant::now();
+        let mut g = timed(2, TimerMode::Normal, t0);
+        assert_eq!(g.roll_counts, [0; 11]);
+        let mut rolls = 0u32;
+        for _ in 0..20 {
+            g.phase = Phase::Roll;
+            g.rolled = false;
+            g.sync_clock(t0);
+            g.apply_at(g.current, Action::Roll, t0).unwrap();
+            let (a, b) = g.dice.unwrap();
+            rolls += 1;
+            assert!(g.roll_counts[usize::from(a + b) - 2] >= 1);
+            assert_eq!(g.roll_counts.iter().sum::<u32>(), rolls);
+        }
+    }
+
+    #[test]
     fn seven_sequence_has_its_own_clocks_and_leaves_the_turn_clock_untouched() {
         let t0 = Instant::now();
         let mut g = timed(3, TimerMode::Normal, t0);
@@ -2957,6 +3021,12 @@ mod tests {
         g.players[0].dev_new[VICTORY_POINT] = 1;
         assert_eq!(g.vp_public(0), 10, "victory point cards stay hidden");
         assert_eq!(g.vp_total(0), 10 + 2 * 2);
+        assert_eq!(
+            g.vp_breakdown(0),
+            VpBreakdown { settlements: 2, cities: 3, dev_cards: 2 * 2, largest_army: 4, longest_road: 1 }
+        );
+        let b = g.vp_breakdown(0);
+        assert_eq!(b.settlements + b.cities + b.dev_cards + b.largest_army + b.longest_road, g.vp_total(0));
         // 14 points is over 12: the current player wins on the spot
         g.current = 0;
         g.check_win();

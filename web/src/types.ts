@@ -228,6 +228,14 @@ export interface Building {
   owner: number;
   city: boolean;
 }
+/** Where a player's points came from, in points (`VpBreakdown` in src/game.rs). The parts add up to `vp_total`. */
+export interface VpBreakdown {
+  settlements: number;
+  cities: number;
+  dev_cards: number;
+  largest_army: number;
+  longest_road: number;
+}
 export interface PlayerView {
   id: number;
   name: string;
@@ -242,6 +250,8 @@ export interface PlayerView {
   vp: number;
   longest_road: number;
   vp_total: number | null;
+  /** Set together with `vp_total`, once the game is over. */
+  vp_breakdown: VpBreakdown | null;
 }
 export type Reply = 'proposer' | 'pending' | 'accepted' | 'declined';
 /** The most offers one player may have open at once (MAX_OPEN_TRADES in src/game.rs). */
@@ -308,6 +318,8 @@ export interface GameView {
   current: number;
   rolled: boolean;
   dice: [number, number] | null;
+  /** How many times each dice total was rolled this game: index 0 is 2, index 10 is 12 (`Game::roll_counts` in src/game.rs). */
+  roll_counts: number[];
   robber: number;
   buildings: (Building | null)[];
   roads: (number | null)[];
