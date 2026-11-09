@@ -3,6 +3,7 @@ import { ActionIcon, Avatar, Chevron, DieFace, ToolIcon } from './art';
 import Board from './Board';
 import Changelog from './Changelog';
 import Footer from './Footer';
+import MapEditor from './MapEditor';
 import { GameSettingsPanel, settingsDifferences } from './GameSettings';
 import {
   BankRow,
@@ -50,10 +51,11 @@ type Dialog = null | 'trade' | 'plenty' | 'monopoly' | 'rules' | 'info' | 'setti
 
 export default function App() {
   const { screen, error, online, name, send, join, leave } = useGame();
-  const { changelog, go } = useRoute();
+  const { changelog, editor, go } = useRoute();
 
   // The game connection above stays open while the changelog is showing, so going back finds the lobby as it was.
   if (changelog) return <Changelog onBack={() => go('app')} />;
+  if (editor) return <MapEditor onBack={() => go('app')} />;
 
   let body;
   if (screen.kind === 'game') {
@@ -81,7 +83,7 @@ export default function App() {
       ) : (
         <div className="entry">
           {body}
-          <Footer onChangelog={() => go('changelog')} />
+          <Footer onChangelog={() => go('changelog')} onMapEditor={() => go('editor')} />
         </div>
       )}
       {error && (

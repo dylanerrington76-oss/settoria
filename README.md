@@ -40,6 +40,30 @@ The host chooses the map in the lobby; it is locked once the game starts.
 
 **USA**: 144 hexes in the shape of the United States, as one big island with 25 harbours.
 
+### Map editor
+
+The **map editor** link at the bottom of the lobby (`/map-editor`) builds a map file without writing JSON. Drag pieces from the
+bar onto the blue sea and move them around; drag a piece back onto the bar (or select it and press Delete) to remove it.
+Ctrl+Z / Ctrl+Shift+Z undo and redo, the wheel zooms and dragging the water pans.
+
+| Piece | In the file |
+|---|---|
+| Striped hex (red and black) | a hex whose terrain is dealt at random: any resource, or a desert |
+| Desert | a hex with `"terrain": "desert"` |
+| Port | a harbour on the coast of a hex, its kind dealt at random (a port can only sit on a coast edge; a hex placed against it removes it) |
+
+Striped means "dealt at random" everywhere in the editor. The `terrain_pool`, `token_pool` and harbour `pool` are worked out
+from what is on the map, so they always add up: resources are shared out evenly (Standard's 4/4/4/3/3 split when the
+numbers don't divide), number tokens follow the Standard set, and about a fifth of the harbours are 3:1. **Settings** sets the
+author, the player range (by default worked out from how many starting settlements fit) and how many of the striped hexes
+become deserts (by default one if you placed no desert yourself). The editor runs the same checks as `validate` (name, room for
+the starting settlements, and so on) and only offers **Download** when the map would be accepted; problems and notes are listed
+from the status button.
+
+**Import** (or dropping a file on the page) opens an existing map file to edit, such as the ones in `maps/builtin`. Fixed
+terrain, numbers, harbour kinds, `robber_start`, `recommended_settings` and the pools are kept, and a map that is opened and saved
+without changes comes out the same. Maps with `"mode": "ring"` harbours are opened with the harbours at fixed positions.
+
 ### Map files (work in progress)
 
 A map is a `MapDef` (`src/map_def.rs`) written as JSON. Standard, Earth and USA are map files like any other:
@@ -167,6 +191,7 @@ offer earns nothing by itself.
     src/game.rs    all rules and timers (Game::apply validates every action, Game::tick fires timeouts) + unit and fuzz tests
     src/main.rs    lobby, WebSocket protocol, static file serving
     web/src        React client (Board.tsx = SVG board, ui.tsx = panels/dialogs, App.tsx = screens)
+    web/src/MapEditor.tsx  the map editor page; mapModel.ts reads, checks and writes map files (no React), MapPieces.tsx draws the pieces
     scripts/smoke.mjs   end-to-end test with 3 websocket clients (server must be running)
     scripts/timer.mjs   end-to-end check of the 10s auto-roll and clock accounting (~12s, needs a fresh server)
 

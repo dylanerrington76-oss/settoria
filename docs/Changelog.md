@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+### [v2026.11.09]
+Added a map editor for building custom maps 
+
 ### [v2026.11.08]
 Updated end of game screen and added changelog page. 
 

@@ -10,7 +10,7 @@ interface Style {
   border: string;
   hi: string;
 }
-const STYLE: Record<Terrain, Style> = {
+export const STYLE: Record<Terrain, Style> = {
   hills: { center: '#f07d38', edge: '#dd5924', border: '#c43e25', hi: '#f6a064' },
   mountains: { center: '#bcc0bd', edge: '#9a9f9b', border: '#80868a', hi: '#d6dad7' },
   pasture: { center: '#a9d02c', edge: '#86b50f', border: '#6c9610', hi: '#d6e440' },
@@ -18,8 +18,8 @@ const STYLE: Record<Terrain, Style> = {
   forest: { center: '#17a047', edge: '#08893c', border: '#066a2d', hi: '#69d252' },
   desert: { center: '#d9d09a', edge: '#c6bc7d', border: '#a39b63', hi: '#e9e2b8' },
 };
-const RES_OF: Record<Terrain, number | null> = { hills: 0, forest: 1, mountains: 2, fields: 3, pasture: 4, desert: null };
-const ART: Record<Terrain, { fill: string; fill2: string; stroke?: string }> = {
+export const RES_OF: Record<Terrain, number | null> = { hills: 0, forest: 1, mountains: 2, fields: 3, pasture: 4, desert: null };
+export const ART: Record<Terrain, { fill: string; fill2: string; stroke?: string }> = {
   hills: { fill: '#f9d3c4', fill2: '#f0b3a0', stroke: '#e48b72' },
   mountains: { fill: '#f6f8f7', fill2: '#dfe4e2', stroke: '#a7aeab' },
   pasture: { fill: '#ffffff', fill2: '#ffffff', stroke: '#c9d79a' },
@@ -28,7 +28,7 @@ const ART: Record<Terrain, { fill: string; fill2: string; stroke?: string }> = {
   desert: { fill: '#000', fill2: '#000' },
 };
 
-function hexPoints(cx: number, cy: number, r: number): string {
+export function hexPoints(cx: number, cy: number, r: number): string {
   return [0, 1, 2, 3, 4, 5]
     .map((i) => {
       const a = ((60 * i - 30) * Math.PI) / 180;
