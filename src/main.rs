@@ -33,7 +33,8 @@ use tower_http::services::{ServeDir, ServeFile};
 type Tx = UnboundedSender<String>;
 type Shared = Arc<Mutex<Room>>;
 
-const MAX_PLAYERS: usize = 4;
+/// Seats at the table (the engine's limit; a map can allow fewer, see `PlayerRange`).
+const MAX_PLAYERS: usize = map_def::MAX_PLAYERS;
 
 /// Messages for joining and managing the room (everything else is a game `Action`).
 #[derive(Deserialize)]
@@ -183,7 +184,7 @@ impl Room {
                     return error(tx, "A game is already in progress");
                 }
                 if self.seats.len() >= MAX_PLAYERS {
-                    return error(tx, "The table is full (4 players)");
+                    return error(tx, format!("The table is full ({MAX_PLAYERS} players)"));
                 }
                 // Use the requested color if it is on the palette and free. With no request
                 // (older clients) take the first free one; a bad or taken request is refused.
@@ -543,7 +544,9 @@ async fn main() {
     println!("  Maps:           {}", maps::ids(&maps).join(", "));
     println!("  Maps folder:    {maps_dir}: {folder_summary}");
     println!("  This computer:  http://localhost:{port}");
-    if let Some(ip) = lan_ip() {
+    // Inside a container the address found by `lan_ip` is the container's own, so `ADVERTISE_HOST` can name the real one.
+    let advertised = std::env::var("ADVERTISE_HOST").ok().map(|h| h.trim().to_string()).filter(|h| !h.is_empty());
+    if let Some(ip) = advertised.or_else(lan_ip) {
         println!("  Other devices:  http://{ip}:{port}");
     }
     if !std::path::Path::new(&static_dir).join("index.html").exists() {
@@ -638,12 +641,12 @@ mod tests {
         assert_eq!(ids(&lobby["maps"]), vec!["standard", "earth", "usa"]);
         let earth = &lobby["maps"][1];
         assert_eq!(earth["name"], "Earth");
-        assert_eq!((earth["hexes"].as_u64(), earth["players_min"].as_u64(), earth["players_max"].as_u64()), (Some(81), Some(2), Some(4)));
+        assert_eq!((earth["hexes"].as_u64(), earth["players_min"].as_u64(), earth["players_max"].as_u64()), (Some(81), Some(2), Some(8)));
         assert_eq!(earth["builtin"], true);
         assert!(earth.get("recommended_settings").is_none());
         let usa = &lobby["maps"][2];
         assert_eq!(usa["name"], "USA");
-        assert_eq!((usa["hexes"].as_u64(), usa["players_min"].as_u64(), usa["players_max"].as_u64()), (Some(144), Some(2), Some(4)));
+        assert_eq!((usa["hexes"].as_u64(), usa["players_min"].as_u64(), usa["players_max"].as_u64()), (Some(144), Some(2), Some(8)));
         assert_eq!(usa["builtin"], true);
     }
 
@@ -702,6 +705,36 @@ mod tests {
         c[0].say(&mut room, json!({ "type": "set_map", "map": "earth" }));
         assert!(c[0].errors()[0].contains("already started"));
         assert_eq!(room.map, "standard");
+    }
+
+    #[test]
+    fn eight_players_can_sit_and_a_ninth_is_turned_away() {
+        let (mut room, mut c) = table(&["Ada", "Bo", "Cy", "Di", "Ed", "Flo", "Gus", "Hal"]);
+        assert_eq!(room.seats.len(), 8);
+        let colors: std::collections::HashSet<_> = room.seats.iter().map(|s| s.color).collect();
+        assert_eq!(colors.len(), 8, "everyone gets a color of their own");
+
+        let mut ninth = Client::new();
+        ninth.say(&mut room, json!({ "type": "join", "name": "Late" }));
+        let errors = ninth.errors();
+        assert!(errors.len() == 1 && errors[0].contains("table is full") && errors[0].contains('8'), "{errors:?}");
+        assert_eq!(room.seats.len(), 8);
+
+        // Standard is a 2 to 4 player board, so the host has to choose a bigger map first
+        c[0].say(&mut room, json!({ "type": "start" }));
+        let errors = c[0].errors();
+        assert!(errors.len() == 1 && errors[0].contains("for 2 to 4 players") && errors[0].contains("8 are seated"), "{errors:?}");
+        assert!(room.game.is_none(), "still in the lobby");
+
+        c[0].say(&mut room, json!({ "type": "set_map", "map": "earth" }));
+        c[0].heard();
+        c[0].say(&mut room, json!({ "type": "start" }));
+        assert!(room.game.is_some(), "started with 8 on Earth");
+        let view = c[0].latest("game").expect("a game message")["view"].clone();
+        assert_eq!(view["players"].as_array().unwrap().len(), 8);
+        assert_eq!(view["order"].as_array().unwrap().len(), 8);
+        assert_eq!(view["bank"], json!([30, 30, 30, 30, 30]), "the bank grows with the table");
+        assert_eq!(view["deck_left"], 44);
     }
 
     #[test]

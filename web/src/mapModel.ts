@@ -15,6 +15,7 @@
 // Everything the server checks that can be checked here is checked here as well (`checkMap`, which follows
 // src/validate.rs), so a map that is offered for download is one the lobby will accept.
 import type { Terrain } from './types';
+import { MAX_PLAYERS, MIN_PLAYERS } from './types';
 
 export type PortKind = 'any' | 'brick' | 'lumber' | 'ore' | 'grain' | 'wool';
 
@@ -431,9 +432,11 @@ export function resolvePlayers(layout: Layout, meta: Meta): { min: number; max: 
   if (!meta.playersAuto) return { min: meta.playersMin, max: meta.playersMax };
   const room = settlementRoom(layout.hexes);
   const per = startingSettlements(meta);
-  for (const n of [4, 3, 2]) if (room >= 2 * n * per) return { min: 2, max: n };
-  for (const n of [4, 3, 2]) if (room >= n * per) return { min: 2, max: n };
-  return { min: 2, max: 2 };
+  // The most players first: [8, 7, ... 2]. Room for twice the starting settlements is the comfortable fit.
+  const counts = Array.from({ length: MAX_PLAYERS - MIN_PLAYERS + 1 }, (_, i) => MAX_PLAYERS - i);
+  for (const n of counts) if (room >= 2 * n * per) return { min: MIN_PLAYERS, max: n };
+  for (const n of counts) if (room >= n * per) return { min: MIN_PLAYERS, max: n };
+  return { min: MIN_PLAYERS, max: MIN_PLAYERS };
 }
 
 function startingSettlements(meta: Meta): number {
@@ -558,8 +561,8 @@ export function checkMap(layout: Layout, meta: Meta): Issue[] {
   checkLabel('name', meta.name, issues);
   checkLabel('author', meta.author, issues);
   const players = resolvePlayers(layout, meta);
-  if (players.min < 2 || players.max > 4 || players.min > players.max) {
-    issues.push({ level: 'error', text: `The player range ${players.min} to ${players.max} is not allowed (it must lie within 2 to 4, with the first at most the second).` });
+  if (players.min < MIN_PLAYERS || players.max > MAX_PLAYERS || players.min > players.max) {
+    issues.push({ level: 'error', text: `The player range ${players.min} to ${players.max} is not allowed (it must lie within ${MIN_PLAYERS} to ${MAX_PLAYERS}, with the first at most the second).` });
   }
   if (!hexes.length) {
     issues.push({ level: 'error', text: 'The map has no hexes yet. Drag a striped hex onto the sea.' });

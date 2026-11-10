@@ -32,6 +32,9 @@ import {
 } from './mapModel';
 import { HexShape, PieceDefs, Piers, Ship } from './MapPieces';
 import { linkClick } from './route';
+import { MAX_PLAYERS, MIN_PLAYERS } from './types';
+
+const PLAYER_COUNTS = Array.from({ length: MAX_PLAYERS - MIN_PLAYERS + 1 }, (_, i) => MIN_PLAYERS + i);
 
 const MIN_K = 0.12;
 const MAX_K = 2.2;
@@ -673,7 +676,7 @@ export default function MapEditor({ onBack }: { onBack: () => void }) {
   const gridW = Math.sqrt(3) * S;
 
   return (
-    <div className={`me${drag?.moved || (drag && drag.id === null) ? ' me-dragging' : ''}`} onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()} onDrop={onDrop}>
+    <div className={`map-editor${drag?.moved || (drag && drag.id === null) ? ' me-dragging' : ''}`} onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()} onDrop={onDrop}>
       <div className="me-sea" ref={canvasRef}>
         <svg className="me-canvas" role="application" aria-label="Map canvas" onPointerDown={panDown} onPointerMove={panMove} onPointerUp={panUp} onPointerCancel={panUp}>
           <PieceDefs uid="w" />
@@ -819,13 +822,13 @@ export default function MapEditor({ onBack }: { onBack: () => void }) {
           ) : (
             <div className="me-row">
               <select aria-label="Fewest players" value={meta.playersMin} onChange={(e) => setM({ playersMin: +e.target.value })}>
-                {[2, 3, 4].map((n) => (
+                {PLAYER_COUNTS.map((n) => (
                   <option key={n}>{n}</option>
                 ))}
               </select>
               <span>to</span>
               <select aria-label="Most players" value={meta.playersMax} onChange={(e) => setM({ playersMax: +e.target.value })}>
-                {[2, 3, 4].map((n) => (
+                {PLAYER_COUNTS.map((n) => (
                   <option key={n}>{n}</option>
                 ))}
               </select>

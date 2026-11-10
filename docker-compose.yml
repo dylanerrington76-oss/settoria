@@ -1,0 +1,55 @@
+# Settoria, locally:
+#
+#   docker compose up --build              the game, on http://localhost:3000
+#   docker compose --profile dev up        also the hot-reloading client, on http://localhost:5173
+#   docker compose --profile test run --rm tests
+#   docker compose run --rm settoria validate /app/maps/my-map.json
+#
+# Settings can go in a `.env` file next to this one (see .env.example).
+
+name: settoria
+
+services:
+  settoria:
+    build:
+      context: .
+      target: runtime
+    image: settoria:local
+    ports:
+      # Every device on your network can reach the game on this port of the computer running Docker.
+      - "${PORT:-3000}:3000"
+    environment:
+      # Only what the server prints at startup: the address to give friends (the lobby always shows the right one).
+      ADVERTISE_HOST: ${ADVERTISE_HOST:-}
+    volumes:
+      # Drop a *.json map file in ./maps and restart the service to see it in the lobby.
+      - ./maps:/app/maps:ro
+    restart: unless-stopped
+
+  # Development: the client with hot reload, talking to the server above. Source is bind-mounted, so
+  # saving a file in web/src updates the browser. (The Rust server is rebuilt with `up --build`.)
+  web-dev:
+    profiles: ["dev"]
+    image: node:22-alpine
+    working_dir: /app/web
+    command: sh -c "npm ci --no-audit --no-fund && npm run dev -- --host 0.0.0.0 --port 5173"
+    environment:
+      API_TARGET: settoria:3000
+    ports:
+      - "${DEV_PORT:-5173}:5173"
+    volumes:
+      - ./web:/app/web
+      - ./docs:/app/docs
+      - web-node-modules:/app/web/node_modules
+    depends_on:
+      - settoria
+
+  # The Rust test suite, in the same image the server is built in.
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      target: tests
+
+volumes:
+  web-node-modules:

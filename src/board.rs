@@ -1060,7 +1060,7 @@ mod tests {
         d.hexes[2] = d.hexes[1].clone();
         assert_eq!(err(&d), MapError::DuplicateHex { q: 1, r: 0 });
 
-        for (min, max) in [(1, 4), (2, 5), (4, 2), (0, 0)] {
+        for (min, max) in [(1, 4), (2, 9), (4, 2), (0, 0)] {
             let mut d = flower();
             d.players = PlayerRange { min, max };
             assert_eq!(err(&d), MapError::BadPlayerRange { min, max });

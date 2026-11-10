@@ -176,7 +176,7 @@ pub(crate) fn check_rules(def: &MapDef) -> Vec<MapError> {
     check_label("name", &def.name, MAX_NAME_CHARS, &mut errors);
     check_label("author", &def.author, MAX_AUTHOR_CHARS, &mut errors);
     let PlayerRange { min, max } = def.players;
-    if min < 2 || max > 4 || min > max {
+    if min < MIN_PLAYERS || max > MAX_PLAYERS || min > max {
         errors.push(MapError::BadPlayerRange { min, max });
     }
     if let Some(s) = &def.recommended_settings {
@@ -831,7 +831,7 @@ mod tests {
 
     #[test]
     fn the_player_range_and_recommended_settings_are_checked() {
-        for (min, max) in [(1, 4), (2, 5), (4, 2), (0, 0)] {
+        for (min, max) in [(1, 4), (2, 9), (4, 2), (0, 0)] {
             let mut d = flower();
             d.players = PlayerRange { min, max };
             assert_error(&d, MapError::BadPlayerRange { min, max });

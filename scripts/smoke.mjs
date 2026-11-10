@@ -66,11 +66,12 @@ assert(clients[0].last.timer === 'very_fast', 'unknown timer mode ignored');
 assert(clients[0].last.map === 'standard', 'lobby defaults to the Standard map');
 {
   const maps = clients[0].last.maps;
-  assert(Array.isArray(maps) && maps.map((m) => m.id).join() === 'standard,earth', 'the lobby lists the maps the server has: ' + JSON.stringify(maps?.map((m) => m.id)));
+  assert(Array.isArray(maps) && maps.map((m) => m.id).join() === 'standard,earth,usa', 'the lobby lists the maps the server has: ' + JSON.stringify(maps?.map((m) => m.id)));
   const [standard, earth] = maps;
   assert(standard.name === 'Standard' && standard.hexes === 19 && earth.name === 'Earth' && earth.hexes === 81, 'each map says its name and size');
-  assert(maps.every((m) => m.builtin === true && m.players_min === 2 && m.players_max === 4 && !('recommended_settings' in m)), 'built-in maps: 2 to 4 players, no suggested rules');
-  assert(clients.every((c) => c.last.maps.length === 2), 'everyone is told the same map list');
+  assert(maps.every((m) => m.builtin === true && m.players_min === 2 && !('recommended_settings' in m)), 'built-in maps: no suggested rules');
+  assert(standard.players_max === 4 && earth.players_max === 8, 'Standard seats 2 to 4 players, Earth 2 to 8');
+  assert(clients.every((c) => c.last.maps.length === 3), 'everyone is told the same map list');
 }
 clients[1].send({ type: 'set_map', map: 'earth' }); await sleep(100);
 assert(clients[1].errors.some((m) => /host/i.test(m)), 'non-host cannot change the map');

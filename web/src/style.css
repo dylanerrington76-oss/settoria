@@ -62,8 +62,8 @@ label { display: block; margin: 14px 0 4px; color: var(--mute); font-size: 13px;
 .panel { background: var(--cream); border: 1px solid rgba(0, 0, 0, 0.18); border-radius: 10px; padding: 26px; box-shadow: 0 10px 30px rgba(0, 30, 60, 0.35); }
 .panel.narrow { width: min(420px, 100%); display: flex; flex-direction: column; gap: 10px; }
 .panel h1 { font-size: 34px; }
-.seats { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 6px; }
-.seat { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px dashed var(--line); border-radius: 8px; }
+.seats { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 5px; }
+.seat { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border: 1px dashed var(--line); border-radius: 8px; }
 .seat.taken { border-style: solid; background: #fff9; }
 .chip { display: inline-block; width: 14px; height: 14px; border-radius: 4px; border: 2px solid rgba(0, 0, 0, 0.4); flex: none; }
 .chip.empty { background: transparent; border: 2px dashed var(--line); }
@@ -86,6 +86,15 @@ label { display: block; margin: 14px 0 4px; color: var(--mute); font-size: 13px;
 .map-suggest { margin: 8px 0 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
 .map-suggest p { margin: 0 0 6px; }
 .map-suggest p.note { margin: 0; }
+.map-upload { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 8px 0 0; }
+.map-upload .note { margin: 0; font-size: 12px; flex: 1 1 160px; }
+.timer-modes.dropping { outline: 3px dashed #2a87ad; outline-offset: 4px; border-radius: 8px; }
+.upload-report { margin: 8px 0 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff9; font-size: 13px; }
+.upload-report ul { list-style: none; margin: 0 0 6px; padding: 0; }
+.upload-report li + li { margin-top: 4px; }
+.upload-report li.bad { color: var(--bad); }
+.upload-report ul.note { margin: 2px 0 0; padding-left: 18px; list-style: disc; font-size: 12px; color: var(--ink); }
+.upload-report ul.note li { margin: 0; overflow-wrap: anywhere; }
 
 /* game rules in the lobby */
 .segments.two { grid-template-columns: repeat(2, 1fr); }
@@ -269,6 +278,9 @@ button.stack:disabled { opacity: 1; cursor: default; }
 /* ---------- rail ---------- */
 .rail { display: flex; flex-direction: column; gap: 6px; padding: 3px 3px 3px 3px; min-height: 0; }
 .rail > * { flex: none; }
+/* Five or more players: the rows no longer fit beside the board, so the rail scrolls and keeps a usable log. */
+.rail.crowded { overflow-y: auto; }
+.rail.crowded .logpanel:not(.closed) { min-height: 150px; }
 .logpanel { flex: 1 1 0; min-height: 0; background: var(--cream); border-radius: 6px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1); overflow: hidden; display: flex; }
 .logpanel.closed { flex: 0 0 0; min-height: 0; height: 0; box-shadow: none; }
 .log { flex: 1; overflow-y: scroll; padding: 10px 8px 6px 14px; font-size: 18px; line-height: 1.5; }
@@ -449,7 +461,7 @@ button.stack:disabled { opacity: 1; cursor: default; }
 
 /* ---------- map editor (/map-editor) ---------- */
 /* The same sea, cream panel and dark glass pills as the rest of the site. */
-.me { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; color: #fff; background: radial-gradient(1100px 700px at 50% 35%, #1587cc 0%, var(--sea) 70%); overflow: hidden; -webkit-user-select: none; user-select: none; }
+.map-editor { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; color: #fff; background: radial-gradient(1100px 700px at 50% 35%, #1587cc 0%, var(--sea) 70%); overflow: hidden; -webkit-user-select: none; user-select: none; }
 .me-sea { position: relative; flex: 1 1 auto; min-height: 0; }
 .me-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
 .me-piece { cursor: grab; }
@@ -461,9 +473,9 @@ button.stack:disabled { opacity: 1; cursor: default; }
 .me-top > * { pointer-events: auto; }
 .me-top .changelog-back { position: static; }
 .me-actions { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.me .me-name { flex: 0 1 280px; width: auto; margin: 0 auto; padding: 7px 16px; text-align: center; font-weight: 700; color: #fff; background: rgba(15, 25, 45, 0.45); border: 0; border-radius: 999px; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
-.me .me-name::placeholder { color: rgba(255, 255, 255, 0.6); }
-.me .me-name:focus { background: rgba(15, 25, 45, 0.7); }
+.map-editor .me-name { flex: 0 1 280px; width: auto; margin: 0 auto; padding: 7px 16px; text-align: center; font-weight: 700; color: #fff; background: rgba(15, 25, 45, 0.45); border: 0; border-radius: 999px; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.map-editor .me-name::placeholder { color: rgba(255, 255, 255, 0.6); }
+.map-editor .me-name:focus { background: rgba(15, 25, 45, 0.7); }
 
 .me-pill { font: inherit; font-weight: 600; color: #fff; background: rgba(15, 25, 45, 0.45); border: 0; border-radius: 999px; padding: 7px 14px; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 .me-pill:hover:not(:disabled), .me-pill--on { background: rgba(15, 25, 45, 0.7); }
@@ -514,7 +526,7 @@ button.stack:disabled { opacity: 1; cursor: default; }
 .me-toast { position: absolute; left: 50%; bottom: 16px; z-index: 8; max-width: calc(100% - 32px); transform: translateX(-50%); padding: 9px 18px; border-radius: 999px; color: #fff; font-weight: 600; text-align: center; background: rgba(15, 25, 45, 0.88); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); pointer-events: none; }
 
 @media (max-width: 760px) {
-  .me .me-name { order: 3; flex: 1 1 100%; margin: 0; padding: 5px 14px; font-size: 14px; }
+  .map-editor .me-name { order: 3; flex: 1 1 100%; margin: 0; padding: 5px 14px; font-size: 14px; }
   .me-top { top: 10px; left: 10px; right: 10px; gap: 6px; }
   .me-top .changelog-back, .me-pill { padding: 5px 11px; font-size: 13px; }
   .me-actions { gap: 6px; }

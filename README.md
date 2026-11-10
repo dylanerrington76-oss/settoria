@@ -1,6 +1,7 @@
 # Settoria
 
-Catan for 2 to 4 players on a local network, on either the standard board or costum maps.
+Catan for 2 to 8 players on a local network, on either the standard board or costum maps.
+The Standard board is for 2 to 4 players; Earth and USA (and any map that says so) seat up to 8.
 
 ## Run it
 
@@ -19,10 +20,33 @@ The server prints two addresses:
 
 Everyone opens the address in a browser, enters a name, picks one of 10 colors (orange, purple, gold, green,
 blue, red, mystic blue, white, silver, black; colors already taken are greyed out) and takes a seat.
-The first player to join is the host. The host picks the **map** (any map in the lobby's list: Standard, Earth and USA to begin with), the **turn timer** (Very Fast 30s, Fast 60s,
+The first player to join is the host. Up to 8 players can take a seat. The host picks the **map** (any map in the lobby's list: Standard, Earth and USA to begin with; maps for another number of players than are seated are greyed out, so 5 to 8 players play on Earth or USA), the **turn timer** (Very Fast 30s, Fast 60s,
 Normal 120s, Slow 240s; Normal is the default), can change any of the **game rules** (see below), and presses
 **Start**. The draft order is shuffled when the
 game starts, so the host does not necessarily go first.
+
+## Run it with Docker
+
+No Rust or Node needed, only Docker with Compose. The image builds the client and the server itself, so it
+doesn't use the prebuilt `web/dist`.
+
+    docker compose up --build            # the game on http://localhost:3000 (add -d to run it in the background)
+
+Friends on your network open `http://<this computer's address>:3000`; the lobby shows the right address. The server's
+startup log can't see the host's address from inside the container, so to have it print a usable "Other devices" link
+copy `.env.example` to `.env` and set `ADVERTISE_HOST` (and `PORT`, to serve on another port). Allow the port through the
+host's firewall if other devices can't connect.
+
+| Command | What it does |
+|---|---|
+| `docker compose up --build` | builds and starts the game (restarts itself unless stopped with `down`) |
+| `docker compose down` | stops it |
+| `docker compose --profile dev up` | also starts the hot-reloading client on http://localhost:5173, proxied to the game server; edit files in `web/src` and the browser updates |
+| `docker compose --profile test run --rm tests` | runs `cargo test --release` in the build image |
+| `docker compose run --rm settoria validate /app/maps/my-map.json` | checks a map file (see *Maps*) |
+
+Maps: `./maps` is mounted into the container read-only, so a `*.json` file put there is loaded after
+`docker compose restart settoria`. The game keeps its state in memory only: stopping the container ends the game.
 
 Options (environment variables): `PORT` (default 3000), `STATIC_DIR` (default `web/dist`), `MAPS_DIR`
 (default `maps`: the folder custom maps are read from, see *Maps*).
@@ -112,7 +136,7 @@ Mistakes in the JSON itself (a misspelt field, an unknown terrain) are reported 
 |---|---|
 | `version` | Always `1`. |
 | `name`, `author` | Shown in the lobby. |
-| `players` | `{ "min": 2, "max": 4 }`, within 2 to 4. |
+| `players` | `{ "min": 2, "max": 8 }`, within 2 to 8 (2 to 4 if left out). |
 | `hexes` | `{ "q": 1, "r": 0 }` per land hex (axial coordinates, at most 250). Add `"terrain"` and/or `"number"` to fix them. |
 | `terrain_pool` | Terrains dealt to the hexes whose terrain isn't fixed: `{ "forest": 4, "desert": 1, ... }`. Must add up to exactly that many hexes. |
 | `token_pool` | Number tokens dealt to the producing hexes whose number isn't fixed: `{ "6": 2, ... }` (2 to 12, never 7). |
@@ -149,6 +173,9 @@ and tries dealing the number tokens a few times to see whether the map can be de
   One per turn, not on the turn bought, may be played before rolling. Victory Point cards stay hidden.
 - Longest Road (5+, longest-path with ties and breaks handled) and Largest Army (3+ knights).
 - First to reach the points target (15 by default) on their own turn wins. 2 players use the same rules unchanged.
+- 5 to 8 players: the same rules, on a map that allows them (Earth, USA). So the shared bank and the development deck
+  don't run dry, a bank or deck the host left at the standard size (19 of each resource, 25 cards) grows with the table:
+  5 or 6 players get 24 of each resource and 34 cards, 7 or 8 get 30 and 44. Anything the host changed is left as chosen.
 
 ## Timers
 
@@ -188,6 +215,8 @@ offer earns nothing by itself.
                     a bad map is a `MapError`, never a panic or a hang (it uses the same checks as `validate`)
     maps/builtin    the Standard, Earth and USA map files
     examples/maps   an example map file
+    Dockerfile      builds the client and server and runs them on a small image (also the `tests` target)
+    docker-compose.yml  `settoria` (the game), `web-dev` (hot-reloading client, profile `dev`) and `tests` (profile `test`)
     src/game.rs    all rules and timers (Game::apply validates every action, Game::tick fires timeouts) + unit and fuzz tests
     src/main.rs    lobby, WebSocket protocol, static file serving
     web/src        React client (Board.tsx = SVG board, ui.tsx = panels/dialogs, App.tsx = screens)

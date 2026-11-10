@@ -1,7 +1,7 @@
 {
   "version": 1,
   "name": "Earth",
-  "players": { "min": 2, "max": 4 },
+  "players": { "min": 2, "max": 8 },
   "style": { "sea_grid": true },
   "hexes": [
     { "q": 5, "r": 0 }, { "q": 6, "r": 0 }, { "q": 8, "r": 0 }, { "q": 9, "r": 0 }, { "q": 11, "r": 0 }, { "q": 14, "r": 0 },

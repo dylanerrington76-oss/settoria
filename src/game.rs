@@ -5,7 +5,7 @@
 
 use crate::board::*;
 use crate::log_event::LogEvent;
-use crate::map_def::{MapDef, MapError, PlayerRange};
+use crate::map_def::{MapDef, MapError, PlayerRange, MAX_PLAYERS, MIN_PLAYERS};
 use rand::seq::SliceRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,8 @@ pub const COST_DEV: Res = [0, 0, 1, 1, 1];
 /// Friendly Robber protects players with this many visible points or fewer.
 pub const FRIENDLY_ROBBER_MAX_VP: usize = 2;
 /// Most starting settlements (summed over all players) the board can reasonably hold.
-pub const MAX_SETUP_SETTLEMENTS_TOTAL: usize = 20;
+/// (Eight players with the most starting settlements each, 5, is 40.)
+pub const MAX_SETUP_SETTLEMENTS_TOTAL: usize = 40;
 /// Standard development deck: knights, road building, year of plenty, monopoly, victory points.
 const STANDARD_DECK: [usize; 5] = [14, 2, 2, 2, 5];
 
@@ -117,6 +118,26 @@ impl Settings {
             return Err("Each starting settlement needs a road, so max roads can't be lower".into());
         }
         Ok(())
+    }
+
+    /// The rules a table of `players` actually plays with. With more than 4 players the shared bank and the
+    /// development deck would run dry far too quickly, so each one that the host left at the standard size
+    /// grows: 5 or 6 players get 24 cards of each resource and a 34-card deck (the 5-6 player extension of the
+    /// board game), 7 or 8 get 30 and 44. A value the host changed is never touched.
+    pub fn scaled_for(mut self, players: usize) -> Settings {
+        let d = Settings::default();
+        let (bank, deck) = match players {
+            0..=4 => return self,
+            5..=6 => (24, 34),
+            _ => (30, 44),
+        };
+        if self.resource_max == d.resource_max {
+            self.resource_max = bank;
+        }
+        if self.dev_cards == d.dev_cards {
+            self.dev_cards = deck;
+        }
+        self
     }
 
     /// Whether `players` people can all fit their starting settlements on the board.
@@ -570,6 +591,10 @@ impl Game {
         settings.validate().expect("invalid game settings");
         assert_eq!(names.len(), colors.len(), "one color per player");
         let n = names.len();
+        // What the host chose is what the game log reports as custom rules; the game itself plays with the
+        // bank and development deck sized for the table (see `scaled_for`).
+        let chosen_settings = settings;
+        let settings = settings.scaled_for(n);
         // The map's own say comes first, so the host gets "this map is for 3 to 4 players".
         let PlayerRange { min, max } = def.players;
         if n < min || n > max {
@@ -577,8 +602,8 @@ impl Game {
         }
         let mut rng = rand::thread_rng();
         let board = Board::from_def(def, map, &mut rng)?;
-        // `from_def` has checked that the map's player range lies within 2 to 4.
-        assert!((2..=4).contains(&n), "Catan needs 2-4 players");
+        // `from_def` has checked that the map's player range lies within the engine's limits.
+        assert!((MIN_PLAYERS..=MAX_PLAYERS).contains(&n), "Catan needs {MIN_PLAYERS}-{MAX_PLAYERS} players");
 
         let mut deck: Vec<usize> = Vec::new();
         for (kind, count) in settings.deck_counts().into_iter().enumerate() {
@@ -643,7 +668,7 @@ impl Game {
         if map != crate::builtin::DEFAULT_MAP {
             g.log(LogEvent::MapChosen { map: map.to_string(), name: def.name.clone() });
         }
-        let changes = g.settings.changes();
+        let changes = chosen_settings.changes();
         if !changes.is_empty() {
             g.log(LogEvent::CustomRules { changes });
         }
@@ -2964,8 +2989,49 @@ mod tests {
         // too many starting settlements for the board
         let five = with(|s| s.starting_settlements = 5);
         assert!(five.check_players(4).is_ok());
-        assert!(with(|s| { s.starting_settlements = 5; s.max_settlements = 6 }).check_players(5).is_err());
+        assert!(with(|s| { s.starting_settlements = 5; s.max_settlements = 6 }).check_players(9).is_err());
         assert!(Settings::default().check_players(4).is_ok());
+        // eight players with the most starting settlements each is what the limit is sized for
+        assert!(five.check_players(8).is_ok());
+        assert!(Settings::default().check_players(8).is_ok());
+    }
+
+    #[test]
+    fn the_bank_and_deck_grow_with_the_table_unless_the_host_chose_otherwise() {
+        let d = Settings::default();
+        for n in 2..=4 {
+            assert_eq!(d.scaled_for(n), d, "{n} players play the standard rules");
+        }
+        for (n, bank, deck) in [(5, 24, 34), (6, 24, 34), (7, 30, 44), (8, 30, 44)] {
+            let s = d.scaled_for(n);
+            assert_eq!((s.resource_max, s.dev_cards), (bank, deck), "{n} players");
+            assert_eq!(Settings { resource_max: d.resource_max, dev_cards: d.dev_cards, ..s }, d, "nothing else changes");
+            assert_eq!(s.validate(), Ok(()));
+            assert_eq!(s.deck_counts().iter().sum::<usize>(), deck as usize);
+        }
+        // a value the host changed is left alone, the other one still grows
+        let s = with(|s| { s.resource_max = 12; s.dev_cards = 10 }).scaled_for(8);
+        assert_eq!((s.resource_max, s.dev_cards), (12, 10));
+        let s = with(|s| s.dev_cards = 40).scaled_for(6);
+        assert_eq!((s.resource_max, s.dev_cards), (24, 40));
+    }
+
+    #[test]
+    fn up_to_eight_players_can_play_on_the_big_maps() {
+        let mut rng = rand::thread_rng();
+        for n in 5..=8usize {
+            for map in ["earth", "usa"] {
+                let colors = PALETTE.iter().take(n).map(|c| c.to_string()).collect();
+                let mut g = Game::with_options(names(n), colors, TimerMode::VeryFast, Settings::default(), map);
+                let scaled = Settings::default().scaled_for(n);
+                assert_eq!((g.n, g.settings), (n, scaled), "{map} with {n}");
+                assert_eq!(g.deck.len(), scaled.dev_cards as usize);
+                assert_eq!(g.bank, [scaled.resource_max; 5]);
+                assert!(!g.log.iter().any(|e| matches!(e, LogEvent::CustomRules { .. })), "scaling isn't a custom rule");
+                play_random(&mut g, &mut rng);
+                invariants(&g);
+            }
+        }
     }
 
     #[test]

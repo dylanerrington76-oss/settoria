@@ -20,6 +20,10 @@ export const COST_SETTLEMENT: Res = [1, 1, 0, 1, 1];
 export const COST_CITY: Res = [0, 0, 3, 2, 0];
 export const COST_DEV: Res = [0, 0, 1, 1, 1];
 
+/** How many players one table seats (MIN_PLAYERS and MAX_PLAYERS in src/map_def.rs). */
+export const MIN_PLAYERS = 2;
+export const MAX_PLAYERS = 8;
+
 /** Colours a player can pick when joining. Hex values must match PALETTE in src/game.rs. */
 export const PALETTE = [
   { name: 'Orange', hex: '#FE5100' },

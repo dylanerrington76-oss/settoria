@@ -1,0 +1,9 @@
+# Keep the build context small and make the image build the client and server itself.
+target/
+.git/
+.gitignore
+.env
+web/node_modules/
+web/dist/
+web/shots/
+*.zip

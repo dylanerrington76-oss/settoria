@@ -454,7 +454,7 @@ mod tests {
         let json = serde_json::to_value(&info).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({ "id": "earth", "name": "Earth", "author": "", "hexes": 81, "players_min": 2, "players_max": 4, "builtin": true })
+            serde_json::json!({ "id": "earth", "name": "Earth", "author": "", "hexes": 81, "players_min": 2, "players_max": 8, "builtin": true })
         );
         assert!(json.get("recommended_settings").is_none(), "no suggestion, no key");
     }

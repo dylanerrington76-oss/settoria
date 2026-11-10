@@ -211,7 +211,12 @@ impl Default for PortsDef {
     }
 }
 
-/// How many players the map is meant for. The engine itself supports 2 to 4.
+/// The fewest and most players the engine can seat at one table.
+pub const MIN_PLAYERS: usize = 2;
+pub const MAX_PLAYERS: usize = 8;
+
+/// How many players the map is meant for. The engine itself supports 2 to 8.
+/// A map file that says nothing about it is for 2 to 4, as before.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct PlayerRange {
@@ -365,7 +370,7 @@ impl fmt::Display for MapError {
             TooManyHexes { count, max } => write!(f, "the map has {count} hexes, but the most allowed is {max}"),
             CoordOutOfRange { q, r } => write!(f, "hex ({q}, {r}) is outside the allowed coordinate range of -{MAX_COORD} to {MAX_COORD}"),
             DuplicateHex { q, r } => write!(f, "hex ({q}, {r}) is listed more than once"),
-            BadPlayerRange { min, max } => write!(f, "the player range {min} to {max} is not allowed (it must lie within 2 to 4, with min at most max)"),
+            BadPlayerRange { min, max } => write!(f, "the player range {min} to {max} is not allowed (it must lie within {MIN_PLAYERS} to {MAX_PLAYERS}, with min at most max)"),
             PlayerCount { players, min, max } => write!(f, "this map is for {min} to {max} players, but {players} are seated"),
             BadRecommendedSettings(why) => write!(f, "the map's recommended settings are invalid: {why}"),
             EmptyName => write!(f, "the map needs a name"),

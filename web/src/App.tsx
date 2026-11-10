@@ -1,9 +1,10 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ActionIcon, Avatar, Chevron, DieFace, ToolIcon } from './art';
 import Board from './Board';
 import Changelog from './Changelog';
 import Footer from './Footer';
 import MapEditor from './MapEditor';
+import { MAX_FILES_AT_ONCE, MAX_MAP_BYTES, UploadResult, uploadMapFile } from './mapUpload';
 import { GameSettingsPanel, settingsDifferences } from './GameSettings';
 import {
   BankRow,
@@ -36,6 +37,8 @@ import {
   CLOCK_TITLES,
   luminance,
   MapInfo,
+  MAX_PLAYERS,
+  MIN_PLAYERS,
   PALETTE,
   Res,
   Settings,
@@ -176,6 +179,48 @@ function JoinScreen({ onJoin }: { onJoin: (n: string, color: string) => void }) 
 /** Who a map is meant for, as the Start button words it: "2", or "3 to 4". */
 const playersText = (m: MapInfo): string => (m.players_min === m.players_max ? `${m.players_min}` : `${m.players_min} to ${m.players_max}`);
 
+/** How many of a map's problems are written out before "and N more". */
+const SHOWN_ISSUES = 6;
+
+/** What came of the files the host just chose: each one is added (with any warnings) or refused (with every problem). */
+function UploadReport({ results, onClose }: { results: UploadResult[]; onClose: () => void }) {
+  return (
+    <div className="upload-report" role="status">
+      <ul>
+        {results.map((r, i) =>
+          r.ok ? (
+            <li key={i}>
+              <span aria-hidden="true">✓ </span>
+              <b>{r.name}</b> added.
+              {r.warnings.length > 0 && (
+                <ul className="note">
+                  {r.warnings.map((w, j) => (
+                    <li key={j}>{w}</li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ) : (
+            <li key={i} className="bad">
+              <span aria-hidden="true">✗ </span>
+              <b>{r.file}</b> was not added:
+              <ul className="note">
+                {r.issues.slice(0, SHOWN_ISSUES).map((w, j) => (
+                  <li key={j}>{w}</li>
+                ))}
+                {r.issues.length > SHOWN_ISSUES && <li>…and {r.issues.length - SHOWN_ISSUES} more.</li>}
+              </ul>
+            </li>
+          ),
+        )}
+      </ul>
+      <button type="button" className="small" onClick={onClose}>
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
 export function Lobby({
   you,
   players,
@@ -225,15 +270,42 @@ export function Lobby({
   // Maps for another number of players are greyed out, not disabled: the host may want to pick one while the
   // table fills up, and Start already says what is wrong. A lone host counts as two (the least a game takes),
   // so the picker isn't grey from end to end before the first guest arrives.
-  const seated = Math.max(players.length, 2);
+  const seated = Math.max(players.length, MIN_PLAYERS);
   const fits = (m: MapInfo) => seated >= m.players_min && seated <= m.players_max;
+
+  // Maps from the host's own files. The server checks them and adds the good ones to everyone's list; the host
+  // then has the last one added selected, so a map they upload is one click from being played.
+  const [uploading, setUploading] = useState(false);
+  const [report, setReport] = useState<UploadResult[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const upload = async (picked: File[]) => {
+    if (!host || uploading || picked.length === 0) return;
+    setUploading(true);
+    setReport([]);
+    try {
+      const token = sessionStorage.getItem('catan-token');
+      const results: UploadResult[] = [];
+      for (const file of picked.slice(0, MAX_FILES_AT_ONCE)) results.push(await uploadMapFile(file, token));
+      if (picked.length > MAX_FILES_AT_ONCE) {
+        results.push({ ok: false, file: `${picked.length - MAX_FILES_AT_ONCE} more files`, issues: [`Choose at most ${MAX_FILES_AT_ONCE} files at a time.`] });
+      }
+      const added = results.filter((r): r is Extract<UploadResult, { ok: true }> => r.ok);
+      if (added.length > 0) send({ type: 'set_map', map: added[added.length - 1].id });
+      setReport(results);
+    } finally {
+      setUploading(false);
+    }
+  };
+  // Only a drag that carries files is taken, so dragging text around the page does nothing here.
+  const carriesFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
   return (
     <div className="centered">
       <div className="panel lobby">
         <div className="lobby-main">
           <h1>Waiting for players</h1>
           <ul className="seats">
-            {[0, 1, 2, 3].map((i) => {
+            {Array.from({ length: MAX_PLAYERS }, (_, i) => i).map((i) => {
               const p = players[i];
               return (
                 <li key={i} className={p ? 'seat taken' : 'seat'}>
@@ -254,7 +326,30 @@ export function Lobby({
           <p className="muted">
             Friends join by opening <b>{location.host}</b> in their browser.
           </p>
-          <fieldset className="timer-modes" disabled={!host}>
+          <fieldset
+            className={'timer-modes' + (dragging ? ' dropping' : '')}
+            disabled={!host}
+            onDragOver={
+              host
+                ? (e) => {
+                    if (!carriesFiles(e)) return;
+                    e.preventDefault();
+                    setDragging(true);
+                  }
+                : undefined
+            }
+            onDragLeave={host ? (e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDragging(false) : undefined}
+            onDrop={
+              host
+                ? (e) => {
+                    if (!carriesFiles(e)) return;
+                    e.preventDefault();
+                    setDragging(false);
+                    void upload(Array.from(e.dataTransfer.files));
+                  }
+                : undefined
+            }
+          >
             <legend>Map</legend>
             <div className="segments maps" role="radiogroup" aria-label="Map">
               {maps.map((m) => {
@@ -270,6 +365,30 @@ export function Lobby({
                 );
               })}
             </div>
+            {host && (
+              <div className="map-upload">
+                <input
+                  ref={picker}
+                  type="file"
+                  accept=".json,application/json"
+                  multiple
+                  hidden
+                  aria-label="Map file"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []);
+                    e.target.value = ''; // so choosing the same file again (after fixing it) still counts
+                    void upload(files);
+                  }}
+                />
+                <button type="button" className="small" disabled={uploading} onClick={() => picker.current?.click()}>
+                  {uploading ? 'Uploading…' : 'Upload map…'}
+                </button>
+                <span className="muted note">
+                  Choose a map .json file, or drop it here (up to {MAX_MAP_BYTES / 1024} KB). It stays until the server restarts.
+                </span>
+              </div>
+            )}
+            {report.length > 0 && <UploadReport results={report} onClose={() => setReport([])} />}
             {suggestion.length > 0 && (
               <div className="map-suggest" role="note">
                 <p>
@@ -311,9 +430,9 @@ export function Lobby({
         </div>
         <div className="lobby-actions">
           {host ? (
-            <button className="primary" disabled={players.length < 2 || wrongCount} onClick={() => send({ type: 'start' })}>
-              {players.length < 2
-                ? 'Need at least 2 players'
+            <button className="primary" disabled={players.length < MIN_PLAYERS || wrongCount} onClick={() => send({ type: 'start' })}>
+              {players.length < MIN_PLAYERS
+                ? `Need at least ${MIN_PLAYERS} players`
                 : wrongCount
                   ? `${info?.name} is for ${range} players`
                   : `Start with ${players.length} players`}
@@ -625,7 +744,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
         </div>
       </div>
 
-      <aside className="rail">
+      <aside className={'rail' + (v.players.length > 5 ? ' crowded' : '')}>
         <section className={'logpanel' + (logOpen ? '' : ' closed')}>
           <Log lines={v.log} v={v} />
         </section>
