@@ -1,22 +1,20 @@
-//! Rules engine for standard (base-game) Catan.
-//!
-//! `Game::apply` is the only mutating entry point; every action is validated
-//! here, so clients can never put the game into an illegal state.
+//! Rules engine for standard base-game 
 
 use crate::board::*;
 use crate::log_event::LogEvent;
 use crate::map_def::{MapDef, MapError, PlayerRange, MAX_PLAYERS, MIN_PLAYERS};
+use crate::types::{ByDev, ByResource, DevCard, DevHand, PerPlayer, PlayerId, Res, Resource};
 use rand::seq::SliceRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
-pub const COST_ROAD: Res = [1, 1, 0, 0, 0];
-pub const COST_SETTLEMENT: Res = [1, 1, 0, 1, 1];
-pub const COST_CITY: Res = [0, 0, 3, 2, 0];
-pub const COST_DEV: Res = [0, 0, 1, 1, 1];
+pub const COST_ROAD: Res = Res::new(1, 1, 0, 0, 0);
+pub const COST_SETTLEMENT: Res = Res::new(1, 1, 0, 1, 1);
+pub const COST_CITY: Res = Res::new(0, 0, 3, 2, 0);
+pub const COST_DEV: Res = Res::new(0, 0, 1, 1, 1);
 
-// Game settings (chosen by the host in the lobby)
+// Game settings
 
 /// Friendly Robber protects players with this many visible points or fewer.
 pub const FRIENDLY_ROBBER_MAX_VP: usize = 2;
@@ -24,7 +22,7 @@ pub const FRIENDLY_ROBBER_MAX_VP: usize = 2;
 /// (Eight players with the most starting settlements each, 5, is 40.)
 pub const MAX_SETUP_SETTLEMENTS_TOTAL: usize = 40;
 /// Standard development deck: knights, road building, year of plenty, monopoly, victory points.
-const STANDARD_DECK: [usize; 5] = [14, 2, 2, 2, 5];
+const STANDARD_DECK: ByDev<usize> = ByDev([14, 2, 2, 2, 5]);
 
 /// The rules of one game. `Settings::default()` is the host's starting point.
 /// Every field has a range (see `validate`), and the server refuses anything outside it.
@@ -186,15 +184,15 @@ impl Settings {
 
     /// Cards of each kind in a deck of `dev_cards`: the standard 14/2/2/2/5 mix scaled
     /// to the chosen size (largest-remainder rounding, so the total is exact).
-    pub fn deck_counts(&self) -> [usize; 5] {
-        let total: usize = STANDARD_DECK.iter().sum();
+    pub fn deck_counts(&self) -> ByDev<usize> {
+        let total: usize = STANDARD_DECK.0.iter().sum();
         let want = self.dev_cards as usize;
-        let mut counts = STANDARD_DECK.map(|c| c * want / total);
-        let left = want - counts.iter().sum::<usize>();
-        let mut order: Vec<usize> = (0..5).collect();
-        order.sort_by_key(|&i| std::cmp::Reverse(STANDARD_DECK[i] * want % total));
-        for &i in order.iter().cycle().take(left) {
-            counts[i] += 1;
+        let mut counts = ByDev::from_fn(|c| STANDARD_DECK[c] * want / total);
+        let left = want - counts.0.iter().sum::<usize>();
+        let mut order = DevCard::ALL;
+        order.sort_by_key(|&c| std::cmp::Reverse(STANDARD_DECK[c] * want % total));
+        for &c in order.iter().cycle().take(left) {
+            counts[c] += 1;
         }
         counts
     }
@@ -258,7 +256,7 @@ pub enum ClockKind {
 #[derive(Clone, Copy, Debug)]
 struct Clock {
     /// The player whose turn it is (whose action the clock waits for).
-    player: usize,
+    player: PlayerId,
     kind: ClockKind,
     deadline: Instant,
     total: Duration,
@@ -269,7 +267,7 @@ struct Clock {
 #[derive(Serialize)]
 pub struct TimerView {
     pub kind: ClockKind,
-    pub player: usize,
+    pub player: PlayerId,
     pub remaining_ms: u64,
     pub total_ms: u64,
 }
@@ -293,15 +291,6 @@ pub fn palette_color(c: &str) -> Option<&'static str> {
     PALETTE.iter().copied().find(|p| p.eq_ignore_ascii_case(c))
 }
 
-/// Development card indices.
-pub const KNIGHT: usize = 0;
-pub const ROAD_BUILDING: usize = 1;
-pub const YEAR_OF_PLENTY: usize = 2;
-pub const MONOPOLY: usize = 3;
-pub const VICTORY_POINT: usize = 4;
-
-const RES_NAMES: [&str; 5] = ["brick", "lumber", "ore", "grain", "wool"];
-
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
@@ -322,7 +311,7 @@ pub enum Phase {
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 pub struct Building {
-    pub owner: usize,
+    pub owner: PlayerId,
     pub city: bool,
 }
 
@@ -342,20 +331,19 @@ pub const MAX_OPEN_TRADES: usize = 6;
 pub struct Trade {
     /// Unique for the whole game; replies, confirmations and withdrawals name an offer by it.
     pub id: u32,
-    pub from: usize,
+    pub from: PlayerId,
     /// What the proposer hands over.
     pub give: Res,
     /// What the proposer wants in return.
     pub want: Res,
-    /// Indexed by player id.
-    pub replies: Vec<Reply>,
+    pub replies: PerPlayer<Reply>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Player {
     pub hand: Res,
-    pub dev: [u8; 5],
-    pub dev_new: [u8; 5],
+    pub dev: DevHand,
+    pub dev_new: DevHand,
     pub knights: u8,
     pub roads_left: u8,
     pub settlements_left: u8,
@@ -372,15 +360,15 @@ pub enum Action {
     BuyDev,
     PlayKnight,
     PlayRoadBuilding,
-    PlayYearOfPlenty { a: usize, b: usize },
-    PlayMonopoly { resource: usize },
+    PlayYearOfPlenty { a: Resource, b: Resource },
+    PlayMonopoly { resource: Resource },
     MoveRobber { hex: usize },
-    Steal { victim: usize },
+    Steal { victim: PlayerId },
     Discard { cards: Res },
-    BankTrade { give: usize, get: usize },
+    BankTrade { give: Resource, get: Resource },
     OfferTrade { give: Res, want: Res },
     RespondTrade { id: u32, accept: bool },
-    ConfirmTrade { id: u32, with: usize },
+    ConfirmTrade { id: u32, with: PlayerId },
     /// Withdraw one of your open offers.
     CancelTrade { id: u32 },
     EndTurn,
@@ -390,17 +378,16 @@ pub struct Game {
     pub board: Board,
     pub settings: Settings,
     pub n: usize,
-    pub names: Vec<String>,
-    /// One palette color per player, parallel to `names`.
-    pub colors: Vec<String>,
-    pub players: Vec<Player>,
+    pub names: PerPlayer<String>,
+    pub colors: PerPlayer<String>,
+    pub players: PerPlayer<Player>,
     pub buildings: Vec<Option<Building>>,
-    pub roads: Vec<Option<usize>>,
+    pub roads: Vec<Option<PlayerId>>,
     pub robber: usize,
     pub bank: Res,
-    pub deck: Vec<usize>,
+    pub deck: Vec<DevCard>,
     pub phase: Phase,
-    pub current: usize,
+    pub current: PlayerId,
     pub rolled: bool,
     pub dice: Option<(u8, u8)>,
     /// How many times each dice total has been rolled this game: index `i` counts totals of `i + 2`
@@ -409,19 +396,19 @@ pub struct Game {
     pub dev_played: bool,
     pub setup_idx: usize,
     pub setup_vertex: Option<usize>,
-    pub discards: Vec<(usize, u8)>,
-    pub steal_candidates: Vec<usize>,
+    pub discards: Vec<(PlayerId, u8)>,
+    pub steal_candidates: Vec<PlayerId>,
     pub road_building_left: u8,
     /// Player offers currently open. Only the player whose turn it is can have any.
     pub trades: Vec<Trade>,
     next_trade_id: u32,
-    pub longest_road_holder: Option<usize>,
-    pub largest_army_holder: Option<usize>,
-    pub winner: Option<usize>,
+    pub longest_road_holder: Option<PlayerId>,
+    pub largest_army_holder: Option<PlayerId>,
+    pub winner: Option<PlayerId>,
     pub log: Vec<LogEvent>,
     /// Seat ids in turn order (randomised when the game starts). Drives the setup
     /// draft (forward, then backward) and every turn after it.
-    pub order: Vec<usize>,
+    pub order: Vec<PlayerId>,
     pub timer_mode: TimerMode,
     clock: Option<Clock>,
     /// Turn-clock time left while the clock is paused (robber sequence) or not yet started.
@@ -454,7 +441,7 @@ pub struct VpBreakdown {
 
 #[derive(Serialize)]
 pub struct PlayerView {
-    pub id: usize,
+    pub id: PlayerId,
     pub name: String,
     pub color: String,
     pub connected: bool,
@@ -475,48 +462,40 @@ pub struct PlayerView {
 
 #[derive(Serialize)]
 pub struct GameView<'a> {
-    pub you: usize,
+    pub you: PlayerId,
     pub settings: Settings,
     pub board: &'a Board,
     pub phase: Phase,
-    pub current: usize,
+    pub current: PlayerId,
     pub rolled: bool,
     pub dice: Option<(u8, u8)>,
     /// Times each total (2 to 12) has been rolled this game; see `Game::roll_counts`.
     pub roll_counts: [u32; 11],
     pub robber: usize,
     pub buildings: &'a [Option<Building>],
-    pub roads: &'a [Option<usize>],
+    pub roads: &'a [Option<PlayerId>],
     pub players: Vec<PlayerView>,
     pub hand: Res,
-    pub dev: [u8; 5],
-    pub dev_new: [u8; 5],
+    pub dev: DevHand,
+    pub dev_new: DevHand,
     pub vp_you: usize,
     pub bank: Res,
     pub deck_left: usize,
     pub dev_played: bool,
-    pub ratios: [u8; 5],
+    pub ratios: ByResource<u8>,
     pub setup_needs: Option<&'static str>,
-    pub discards: &'a [(usize, u8)],
-    pub steal_candidates: &'a [usize],
+    pub discards: &'a [(PlayerId, u8)],
+    pub steal_candidates: &'a [PlayerId],
     pub road_building_left: u8,
     pub trades: &'a [Trade],
     pub legal: Legal,
-    pub longest_road_holder: Option<usize>,
-    pub largest_army_holder: Option<usize>,
-    pub winner: Option<usize>,
+    pub longest_road_holder: Option<PlayerId>,
+    pub largest_army_holder: Option<PlayerId>,
+    pub winner: Option<PlayerId>,
     pub log: &'a [LogEvent],
-    pub order: &'a [usize],
+    pub order: &'a [PlayerId],
     pub timer_mode: TimerMode,
     pub timer: Option<TimerView>,
-}
-
-fn sum(r: &Res) -> u32 {
-    r.iter().map(|&x| x as u32).sum()
-}
-
-fn covers(have: &Res, need: &Res) -> bool {
-    (0..5).all(|i| have[i] >= need[i])
 }
 
 impl Game {
@@ -603,27 +582,25 @@ impl Game {
         let mut rng = rand::thread_rng();
         let board = Board::from_def(def, map, &mut rng)?;
         // `from_def` has checked that the map's player range lies within the engine's limits.
-        assert!((MIN_PLAYERS..=MAX_PLAYERS).contains(&n), "Catan needs {MIN_PLAYERS}-{MAX_PLAYERS} players");
+        assert!((MIN_PLAYERS..=MAX_PLAYERS).contains(&n), "Settoria needs {MIN_PLAYERS}-{MAX_PLAYERS} players");
 
-        let mut deck: Vec<usize> = Vec::new();
-        for (kind, count) in settings.deck_counts().into_iter().enumerate() {
-            deck.extend(std::iter::repeat(kind).take(count));
+        let mut deck: Vec<DevCard> = Vec::new();
+        for (card, &count) in settings.deck_counts().iter() {
+            deck.extend(std::iter::repeat(card).take(count));
         }
         deck.shuffle(&mut rng);
 
-        let players = (0..n)
-            .map(|_| Player {
-                hand: [0; 5],
-                dev: [0; 5],
-                dev_new: [0; 5],
-                knights: 0,
-                roads_left: settings.max_roads,
-                settlements_left: settings.max_settlements,
-                cities_left: settings.max_cities,
-            })
-            .collect();
+        let players = PerPlayer::from_fn(n, |_| Player {
+            hand: Res::ZERO,
+            dev: DevHand::ZERO,
+            dev_new: DevHand::ZERO,
+            knights: 0,
+            roads_left: settings.max_roads,
+            settlements_left: settings.max_settlements,
+            cities_left: settings.max_cities,
+        });
 
-        let mut order: Vec<usize> = (0..n).collect();
+        let mut order: Vec<PlayerId> = PlayerId::range(n).collect();
         if shuffle {
             order.shuffle(&mut rng);
         }
@@ -631,14 +608,14 @@ impl Game {
         let mut g = Game {
             settings,
             n,
-            names,
-            colors,
+            names: names.into(),
+            colors: colors.into(),
             players,
             buildings: vec![None; board.vertices.len()],
             roads: vec![None; board.edges.len()],
             robber: board.desert,
             board,
-            bank: [settings.resource_max; 5],
+            bank: Res::splat(settings.resource_max),
             deck,
             phase: Phase::Setup,
             current: order[0],
@@ -687,7 +664,7 @@ impl Game {
 
     /// Who places during setup step `idx`: turn order forward, then backward, then
     /// forward again, and so on for each round of starting settlements.
-    fn setup_player(&self, idx: usize) -> usize {
+    fn setup_player(&self, idx: usize) -> PlayerId {
         let (round, i) = (idx / self.n, idx % self.n);
         let pos = if round % 2 == 0 { i } else { self.n - 1 - i };
         self.order[pos]
@@ -720,7 +697,7 @@ impl Game {
     }
 
     /// The player after `p` in turn order.
-    fn next_player(&self, p: usize) -> usize {
+    fn next_player(&self, p: PlayerId) -> PlayerId {
         let pos = self.order.iter().position(|&x| x == p).unwrap_or(0);
         self.order[(pos + 1) % self.n]
     }
@@ -746,7 +723,7 @@ impl Game {
                 .all(|&n| self.buildings[n].is_none())
     }
 
-    pub fn settlement_connected(&self, p: usize, v: usize) -> bool {
+    pub fn settlement_connected(&self, p: PlayerId, v: usize) -> bool {
         self.settlement_free(v)
             && self.board.vertices[v]
                 .edges
@@ -756,7 +733,7 @@ impl Game {
 
     /// Edge is empty and touches one of `p`'s buildings or roads
     /// (an opponent's building blocks continuing through its vertex).
-    pub fn road_connected(&self, p: usize, e: usize) -> bool {
+    pub fn road_connected(&self, p: PlayerId, e: usize) -> bool {
         if self.roads[e].is_some() {
             return false;
         }
@@ -779,7 +756,7 @@ impl Game {
         false
     }
 
-    pub fn legal_roads(&self, p: usize) -> Vec<usize> {
+    pub fn legal_roads(&self, p: PlayerId) -> Vec<usize> {
         if self.players[p].roads_left == 0 {
             return vec![];
         }
@@ -788,7 +765,7 @@ impl Game {
             .collect()
     }
 
-    pub fn legal(&self, p: usize) -> Legal {
+    pub fn legal(&self, p: PlayerId) -> Legal {
         let mut l = Legal::default();
         if p != self.current {
             return l;
@@ -836,14 +813,12 @@ impl Game {
     /// Hexes where `p` may put the robber. With Friendly Robber on, a hex is off limits
     /// if any other player with `FRIENDLY_ROBBER_MAX_VP` or fewer visible points has a
     /// building on it (unless that would leave nowhere to go).
-    pub fn robber_hexes(&self, p: usize) -> Vec<usize> {
+    pub fn robber_hexes(&self, p: PlayerId) -> Vec<usize> {
         let all: Vec<usize> = (0..self.board.hexes.len()).filter(|&h| h != self.robber).collect();
         if !self.settings.friendly_robber {
             return all;
         }
-        let protected: Vec<bool> = (0..self.n)
-            .map(|q| q != p && self.vp_public(q) <= FRIENDLY_ROBBER_MAX_VP)
-            .collect();
+        let protected = PerPlayer::from_fn(self.n, |q| q != p && self.vp_public(q) <= FRIENDLY_ROBBER_MAX_VP);
         let open: Vec<usize> = all
             .iter()
             .copied()
@@ -863,7 +838,7 @@ impl Game {
 
     /// Best trade ratio `p` has for giving `res` to the bank: the base ratio from the
     /// settings (4 by default), improved by harbours to 3 or 2 where that is better.
-    pub fn ratio(&self, p: usize, res: usize) -> u8 {
+    pub fn ratio(&self, p: PlayerId, res: Resource) -> u8 {
         let mut r = self.settings.bank_ratio;
         for port in &self.board.ports {
             let owned = [port.a, port.b]
@@ -881,7 +856,7 @@ impl Game {
         r
     }
 
-    pub fn longest_road(&self, p: usize) -> usize {
+    pub fn longest_road(&self, p: PlayerId) -> usize {
         let mut used = vec![false; self.roads.len()];
         let mut best = 0;
         for v in 0..self.board.vertices.len() {
@@ -896,7 +871,14 @@ impl Game {
         best
     }
 
-    fn road_dfs(&self, p: usize, v: usize, used: &mut Vec<bool>, len: usize, arrived: bool) -> usize {
+    /// `longest_road` for every player. The search enumerates every trail in a road network, so it
+    /// is the costly part of a view; callers that need all the lengths (the award check, and a
+    /// broadcast that builds one view per seat) compute them once with this and share the result.
+    pub fn longest_roads(&self) -> PerPlayer<usize> {
+        PerPlayer::from_fn(self.n, |p| self.longest_road(p))
+    }
+
+    fn road_dfs(&self, p: PlayerId, v: usize, used: &mut Vec<bool>, len: usize, arrived: bool) -> usize {
         // An opponent's settlement/city interrupts a road that arrives at it.
         if arrived {
             if let Some(b) = self.buildings[v] {
@@ -917,7 +899,7 @@ impl Game {
         best
     }
 
-    pub fn vp_public(&self, p: usize) -> usize {
+    pub fn vp_public(&self, p: PlayerId) -> usize {
         let mut vp = 0;
         for b in self.buildings.iter().flatten() {
             if b.owner == p {
@@ -934,7 +916,7 @@ impl Game {
     }
 
     /// The parts of `vp_total(p)`: points from settlements, cities, Victory Point cards and the two awards.
-    pub fn vp_breakdown(&self, p: usize) -> VpBreakdown {
+    pub fn vp_breakdown(&self, p: PlayerId) -> VpBreakdown {
         let (mut settlements, mut cities) = (0, 0);
         for b in self.buildings.iter().flatten() {
             if b.owner == p {
@@ -946,7 +928,7 @@ impl Game {
             }
         }
         let pl = &self.players[p];
-        let cards = pl.dev[VICTORY_POINT] as usize + pl.dev_new[VICTORY_POINT] as usize;
+        let cards = pl.dev[DevCard::VictoryPoint] as usize + pl.dev_new[DevCard::VictoryPoint] as usize;
         VpBreakdown {
             settlements,
             cities,
@@ -956,9 +938,9 @@ impl Game {
         }
     }
 
-    pub fn vp_total(&self, p: usize) -> usize {
+    pub fn vp_total(&self, p: PlayerId) -> usize {
         let pl = &self.players[p];
-        let cards = pl.dev[VICTORY_POINT] as usize + pl.dev_new[VICTORY_POINT] as usize;
+        let cards = pl.dev[DevCard::VictoryPoint] as usize + pl.dev_new[DevCard::VictoryPoint] as usize;
         self.vp_public(p) + cards * self.settings.vp_card_points as usize
     }
 
@@ -967,9 +949,9 @@ impl Game {
     // ------------------------------------------------------------------
 
     fn update_longest_road(&mut self) {
-        let lens: Vec<usize> = (0..self.n).map(|p| self.longest_road(p)).collect();
+        let lens = self.longest_roads();
         let max = *lens.iter().max().unwrap();
-        let top: Vec<usize> = (0..self.n).filter(|&p| lens[p] == max).collect();
+        let top: Vec<PlayerId> = PlayerId::range(self.n).filter(|&p| lens[p] == max).collect();
         let old = self.longest_road_holder;
         let new = if max < self.settings.longest_road_min as usize {
             None
@@ -989,7 +971,7 @@ impl Game {
         }
     }
 
-    fn update_largest_army(&mut self, p: usize) {
+    fn update_largest_army(&mut self, p: PlayerId) {
         let k = self.players[p].knights;
         if k < self.settings.largest_army_min || self.largest_army_holder == Some(p) {
             return;
@@ -1022,14 +1004,14 @@ impl Game {
     // Actions
     // ------------------------------------------------------------------
 
-    pub fn apply(&mut self, p: usize, act: Action) -> Result<(), String> {
+    pub fn apply(&mut self, p: PlayerId, act: Action) -> Result<(), String> {
         self.apply_at(p, act, Instant::now())
     }
 
     /// `apply` with an explicit clock reading (lets tests drive time).
-    pub fn apply_at(&mut self, p: usize, act: Action, now: Instant) -> Result<(), String> {
+    pub fn apply_at(&mut self, p: PlayerId, act: Action, now: Instant) -> Result<(), String> {
         self.bonus = Duration::ZERO;
-        if p >= self.n {
+        if !self.has_player(p) {
             return Err("Unknown player".into());
         }
         if self.phase == Phase::GameOver {
@@ -1054,7 +1036,7 @@ impl Game {
         res
     }
 
-    fn do_current(&mut self, p: usize, act: Action) -> Result<(), String> {
+    fn do_current(&mut self, p: PlayerId, act: Action) -> Result<(), String> {
         match act {
             Action::Roll => self.do_roll(),
             Action::BuildRoad { edge } => self.do_build_road(p, edge),
@@ -1076,10 +1058,16 @@ impl Game {
         }
     }
 
-    fn pay(&mut self, p: usize, cost: &Res) {
-        for i in 0..5 {
-            self.players[p].hand[i] -= cost[i];
-            self.bank[i] += cost[i];
+    /// Whether `p` is one of the seats at this table. (A `PlayerId` can come straight off the wire, so it is
+    /// checked here once rather than trusted.)
+    fn has_player(&self, p: PlayerId) -> bool {
+        p.index() < self.n
+    }
+
+    fn pay(&mut self, p: PlayerId, cost: &Res) {
+        for r in Resource::ALL {
+            self.players[p].hand[r] -= cost[r];
+            self.bank[r] += cost[r];
         }
     }
 
@@ -1101,9 +1089,9 @@ impl Game {
     /// Carry out the result of a roll: production, or the 7 sequence.
     fn resolve_roll(&mut self, total: u8) {
         if total == 7 {
-            self.discards = (0..self.n)
+            self.discards = PlayerId::range(self.n)
                 .filter_map(|i| {
-                    let c = sum(&self.players[i].hand);
+                    let c = self.players[i].hand.total();
                     if c > self.settings.discard_limit as u32 {
                         Some((i, (c / 2) as u8))
                     } else {
@@ -1125,7 +1113,7 @@ impl Game {
     }
 
     fn distribute(&mut self, roll: u8) {
-        let mut gains = vec![[0u8; 5]; self.n];
+        let mut gains: PerPlayer<Res> = PerPlayer::from_fn(self.n, |_| Res::ZERO);
         for (hi, hex) in self.board.hexes.iter().enumerate() {
             if hex.number != Some(roll) || hi == self.robber {
                 continue;
@@ -1137,20 +1125,20 @@ impl Game {
                 }
             }
         }
-        let mut received = vec![[0u8; 5]; self.n];
-        for r in 0..5 {
+        let mut received: PerPlayer<Res> = PerPlayer::from_fn(self.n, |_| Res::ZERO);
+        for r in Resource::ALL {
             let demand: u32 = gains.iter().map(|g| g[r] as u32).sum();
             if demand == 0 {
                 continue;
             }
             let takers = gains.iter().filter(|g| g[r] > 0).count();
             if demand <= self.bank[r] as u32 {
-                for p in 0..self.n {
+                for p in PlayerId::range(self.n) {
                     received[p][r] = gains[p][r];
                 }
             } else if takers == 1 {
                 // Only one player is owed this resource: they get what's left.
-                for p in 0..self.n {
+                for p in PlayerId::range(self.n) {
                     if gains[p][r] > 0 {
                         received[p][r] = self.bank[r];
                     }
@@ -1159,18 +1147,18 @@ impl Game {
                 self.log(LogEvent::BankShort { resource: r });
             }
         }
-        for p in 0..self.n {
-            for r in 0..5 {
+        for p in PlayerId::range(self.n) {
+            for r in Resource::ALL {
                 self.players[p].hand[r] += received[p][r];
                 self.bank[r] -= received[p][r];
             }
-            if received[p].iter().any(|&n| n > 0) {
+            if received[p].total() > 0 {
                 self.log(LogEvent::Collected { player: p, cards: received[p] });
             }
         }
     }
 
-    fn do_discard(&mut self, p: usize, cards: Res) -> Result<(), String> {
+    fn do_discard(&mut self, p: PlayerId, cards: Res) -> Result<(), String> {
         if self.phase != Phase::Discard {
             return Err("Nobody needs to discard right now".into());
         }
@@ -1180,10 +1168,10 @@ impl Game {
             .position(|d| d.0 == p)
             .ok_or("You don't need to discard")?;
         let need = self.discards[idx].1 as u32;
-        if sum(&cards) != need {
+        if cards.total() != need {
             return Err(format!("Discard exactly {} cards", need));
         }
-        if !covers(&self.players[p].hand, &cards) {
+        if !self.players[p].hand.covers(&cards) {
             return Err("You don't have those cards".into());
         }
         self.pay(p, &cards);
@@ -1196,7 +1184,7 @@ impl Game {
         Ok(())
     }
 
-    fn do_move_robber(&mut self, p: usize, hex: usize) -> Result<(), String> {
+    fn do_move_robber(&mut self, p: PlayerId, hex: usize) -> Result<(), String> {
         if self.phase != Phase::MoveRobber {
             return Err("You can't move the robber now".into());
         }
@@ -1211,10 +1199,10 @@ impl Game {
         }
         self.robber = hex;
         self.log(LogEvent::RobberMoved { player: p });
-        let mut cands: Vec<usize> = vec![];
+        let mut cands: Vec<PlayerId> = vec![];
         for &v in &self.board.hexes[hex].vertices {
             if let Some(b) = self.buildings[v] {
-                if b.owner != p && sum(&self.players[b.owner].hand) > 0 && !cands.contains(&b.owner) {
+                if b.owner != p && self.players[b.owner].hand.total() > 0 && !cands.contains(&b.owner) {
                     cands.push(b.owner);
                 }
             }
@@ -1230,7 +1218,7 @@ impl Game {
         Ok(())
     }
 
-    fn do_steal(&mut self, victim: usize) -> Result<(), String> {
+    fn do_steal(&mut self, victim: PlayerId) -> Result<(), String> {
         if self.phase != Phase::Steal {
             return Err("There is nobody to steal from right now".into());
         }
@@ -1242,12 +1230,12 @@ impl Game {
         Ok(())
     }
 
-    fn steal_from(&mut self, thief: usize, victim: usize) {
+    fn steal_from(&mut self, thief: PlayerId, victim: PlayerId) {
         let hand = self.players[victim].hand;
-        let total = sum(&hand);
+        let total = hand.total();
         if total > 0 {
             let mut k = rand::thread_rng().gen_range(0..total);
-            for r in 0..5 {
+            for r in Resource::ALL {
                 if k < hand[r] as u32 {
                     self.players[victim].hand[r] -= 1;
                     self.players[thief].hand[r] += 1;
@@ -1265,7 +1253,7 @@ impl Game {
         self.phase = self.resume_phase();
     }
 
-    fn do_build_road(&mut self, p: usize, edge: usize) -> Result<(), String> {
+    fn do_build_road(&mut self, p: PlayerId, edge: usize) -> Result<(), String> {
         if edge >= self.roads.len() {
             return Err("Unknown road location".into());
         }
@@ -1301,7 +1289,7 @@ impl Game {
                 if self.players[p].roads_left == 0 {
                     return Err("You have no roads left".into());
                 }
-                if !covers(&self.players[p].hand, &COST_ROAD) {
+                if !self.players[p].hand.covers(&COST_ROAD) {
                     return Err("A road costs 1 brick and 1 lumber".into());
                 }
                 if !self.road_connected(p, edge) {
@@ -1319,7 +1307,7 @@ impl Game {
         }
     }
 
-    fn do_build_settlement(&mut self, p: usize, v: usize) -> Result<(), String> {
+    fn do_build_settlement(&mut self, p: PlayerId, v: usize) -> Result<(), String> {
         if v >= self.buildings.len() {
             return Err("Unknown settlement location".into());
         }
@@ -1353,7 +1341,7 @@ impl Game {
                 if self.players[p].settlements_left == 0 {
                     return Err("You have no settlements left".into());
                 }
-                if !covers(&self.players[p].hand, &COST_SETTLEMENT) {
+                if !self.players[p].hand.covers(&COST_SETTLEMENT) {
                     return Err("A settlement costs 1 brick, 1 lumber, 1 grain and 1 wool".into());
                 }
                 if !self.settlement_connected(p, v) {
@@ -1371,7 +1359,7 @@ impl Game {
         }
     }
 
-    fn do_build_city(&mut self, p: usize, v: usize) -> Result<(), String> {
+    fn do_build_city(&mut self, p: PlayerId, v: usize) -> Result<(), String> {
         if self.phase != Phase::Main {
             return Err("You can't build a city right now".into());
         }
@@ -1381,7 +1369,7 @@ impl Game {
         if self.players[p].cities_left == 0 {
             return Err("You have no cities left".into());
         }
-        if !covers(&self.players[p].hand, &COST_CITY) {
+        if !self.players[p].hand.covers(&COST_CITY) {
             return Err("A city costs 3 ore and 2 grain".into());
         }
         match self.buildings[v] {
@@ -1397,14 +1385,14 @@ impl Game {
         Ok(())
     }
 
-    fn do_buy_dev(&mut self, p: usize) -> Result<(), String> {
+    fn do_buy_dev(&mut self, p: PlayerId) -> Result<(), String> {
         if self.phase != Phase::Main {
             return Err("You can't buy a development card right now".into());
         }
         if self.deck.is_empty() {
             return Err("The development deck is empty".into());
         }
-        if !covers(&self.players[p].hand, &COST_DEV) {
+        if !self.players[p].hand.covers(&COST_DEV) {
             return Err("A development card costs 1 ore, 1 grain and 1 wool".into());
         }
         self.pay(p, &COST_DEV);
@@ -1415,7 +1403,7 @@ impl Game {
         Ok(())
     }
 
-    fn check_dev_play(&self, p: usize, kind: usize) -> Result<(), String> {
+    fn check_dev_play(&self, p: PlayerId, kind: DevCard) -> Result<(), String> {
         if !matches!(self.phase, Phase::Roll | Phase::Main) {
             return Err("You can't play a development card right now".into());
         }
@@ -1428,15 +1416,15 @@ impl Game {
         Ok(())
     }
 
-    fn use_dev(&mut self, p: usize, kind: usize) {
+    fn use_dev(&mut self, p: PlayerId, kind: DevCard) {
         self.players[p].dev[kind] -= 1;
         self.dev_played = true;
         self.trades.clear();
     }
 
-    fn do_knight(&mut self, p: usize) -> Result<(), String> {
-        self.check_dev_play(p, KNIGHT)?;
-        self.use_dev(p, KNIGHT);
+    fn do_knight(&mut self, p: PlayerId) -> Result<(), String> {
+        self.check_dev_play(p, DevCard::Knight)?;
+        self.use_dev(p, DevCard::Knight);
         self.players[p].knights += 1;
         self.log(LogEvent::PlayedKnight { player: p });
         self.update_largest_army(p);
@@ -1444,23 +1432,20 @@ impl Game {
         Ok(())
     }
 
-    fn do_road_building_card(&mut self, p: usize) -> Result<(), String> {
-        self.check_dev_play(p, ROAD_BUILDING)?;
+    fn do_road_building_card(&mut self, p: PlayerId) -> Result<(), String> {
+        self.check_dev_play(p, DevCard::RoadBuilding)?;
         if self.legal_roads(p).is_empty() {
             return Err("You have nowhere to build a road".into());
         }
-        self.use_dev(p, ROAD_BUILDING);
+        self.use_dev(p, DevCard::RoadBuilding);
         self.road_building_left = self.players[p].roads_left.min(2);
         self.phase = Phase::RoadBuilding;
         self.log(LogEvent::PlayedRoadBuilding { player: p });
         Ok(())
     }
 
-    fn do_year_of_plenty(&mut self, p: usize, a: usize, b: usize) -> Result<(), String> {
-        self.check_dev_play(p, YEAR_OF_PLENTY)?;
-        if a >= 5 || b >= 5 {
-            return Err("Unknown resource".into());
-        }
+    fn do_year_of_plenty(&mut self, p: PlayerId, a: Resource, b: Resource) -> Result<(), String> {
+        self.check_dev_play(p, DevCard::YearOfPlenty)?;
         let ok = if a == b {
             self.bank[a] >= 2
         } else {
@@ -1469,7 +1454,7 @@ impl Game {
         if !ok {
             return Err("The bank doesn't have those resources".into());
         }
-        self.use_dev(p, YEAR_OF_PLENTY);
+        self.use_dev(p, DevCard::YearOfPlenty);
         self.bank[a] -= 1;
         self.bank[b] -= 1;
         self.players[p].hand[a] += 1;
@@ -1478,14 +1463,11 @@ impl Game {
         Ok(())
     }
 
-    fn do_monopoly(&mut self, p: usize, r: usize) -> Result<(), String> {
-        self.check_dev_play(p, MONOPOLY)?;
-        if r >= 5 {
-            return Err("Unknown resource".into());
-        }
-        self.use_dev(p, MONOPOLY);
+    fn do_monopoly(&mut self, p: PlayerId, r: Resource) -> Result<(), String> {
+        self.check_dev_play(p, DevCard::Monopoly)?;
+        self.use_dev(p, DevCard::Monopoly);
         let mut taken = 0u32;
-        for o in 0..self.n {
+        for o in PlayerId::range(self.n) {
             if o != p {
                 let c = self.players[o].hand[r];
                 self.players[o].hand[r] = 0;
@@ -1497,19 +1479,19 @@ impl Game {
         Ok(())
     }
 
-    fn do_bank_trade(&mut self, p: usize, give: usize, get: usize) -> Result<(), String> {
+    fn do_bank_trade(&mut self, p: PlayerId, give: Resource, get: Resource) -> Result<(), String> {
         if self.phase != Phase::Main {
             return Err("You can only trade after rolling".into());
         }
-        if give >= 5 || get >= 5 || give == get {
+        if give == get {
             return Err("Pick two different resources".into());
         }
         let ratio = self.ratio(p, give);
         if self.players[p].hand[give] < ratio {
-            return Err(format!("You need {} {} for that trade", ratio, RES_NAMES[give]));
+            return Err(format!("You need {} {} for that trade", ratio, give.name()));
         }
         if self.bank[get] == 0 {
-            return Err(format!("The bank has no {} left", RES_NAMES[get]));
+            return Err(format!("The bank has no {} left", get.name()));
         }
         self.players[p].hand[give] -= ratio;
         self.bank[give] += ratio;
@@ -1522,17 +1504,17 @@ impl Game {
 
     /// Open another offer to every other player. A proposer may have several open at
     /// once (up to `MAX_OPEN_TRADES`), each answered separately.
-    fn do_offer_trade(&mut self, p: usize, give: Res, want: Res) -> Result<(), String> {
+    fn do_offer_trade(&mut self, p: PlayerId, give: Res, want: Res) -> Result<(), String> {
         if self.phase != Phase::Main {
             return Err("You can only trade after rolling".into());
         }
-        if sum(&give) == 0 || sum(&want) == 0 {
+        if give.total() == 0 || want.total() == 0 {
             return Err("A trade needs cards on both sides".into());
         }
-        if (0..5).any(|i| give[i] > 0 && want[i] > 0) {
+        if Resource::ALL.iter().any(|&r| give[r] > 0 && want[r] > 0) {
             return Err("You can't offer and ask for the same resource".into());
         }
-        if !covers(&self.players[p].hand, &give) {
+        if !self.players[p].hand.covers(&give) {
             return Err("You don't have those cards".into());
         }
         if self.trades.iter().any(|t| t.give == give && t.want == want) {
@@ -1541,7 +1523,7 @@ impl Game {
         if self.trades.len() >= MAX_OPEN_TRADES {
             return Err(format!("You can have at most {MAX_OPEN_TRADES} offers open at once"));
         }
-        let mut replies = vec![Reply::Pending; self.n];
+        let mut replies = PerPlayer::from_fn(self.n, |_| Reply::Pending);
         replies[p] = Reply::Proposer;
         let id = self.next_trade_id;
         self.next_trade_id += 1;
@@ -1556,13 +1538,13 @@ impl Game {
         Ok(())
     }
 
-    fn do_respond_trade(&mut self, p: usize, id: u32, accept: bool) -> Result<(), String> {
+    fn do_respond_trade(&mut self, p: PlayerId, id: u32, accept: bool) -> Result<(), String> {
         let hand = self.players[p].hand;
         let t = self.trades.iter_mut().find(|t| t.id == id).ok_or("That offer is no longer open")?;
         if t.from == p {
             return Err("You proposed this trade".into());
         }
-        if accept && !covers(&hand, &t.want) {
+        if accept && !hand.covers(&t.want) {
             return Err("You don't have the cards to accept".into());
         }
         t.replies[p] = if accept { Reply::Accepted } else { Reply::Declined };
@@ -1571,20 +1553,20 @@ impl Game {
 
     /// Complete offer `id` with a player who accepted it. The proposer's other offers stay
     /// open; `prune_trades` then drops any the proposer can no longer pay for.
-    fn do_confirm_trade(&mut self, p: usize, id: u32, with: usize) -> Result<(), String> {
+    fn do_confirm_trade(&mut self, p: PlayerId, id: u32, with: PlayerId) -> Result<(), String> {
         let t = self.trades.iter().find(|t| t.id == id).cloned().ok_or("That offer is no longer open")?;
         if t.from != p {
             return Err("Only the proposer can confirm".into());
         }
-        if with >= self.n || t.replies[with] != Reply::Accepted {
+        if !self.has_player(with) || t.replies[with] != Reply::Accepted {
             return Err("That player hasn't accepted".into());
         }
-        if !covers(&self.players[p].hand, &t.give) || !covers(&self.players[with].hand, &t.want) {
+        if !self.players[p].hand.covers(&t.give) || !self.players[with].hand.covers(&t.want) {
             return Err("One of you no longer has the cards for this trade".into());
         }
-        for i in 0..5 {
-            self.players[p].hand[i] = self.players[p].hand[i] - t.give[i] + t.want[i];
-            self.players[with].hand[i] = self.players[with].hand[i] + t.give[i] - t.want[i];
+        for r in Resource::ALL {
+            self.players[p].hand[r] = self.players[p].hand[r] - t.give[r] + t.want[r];
+            self.players[with].hand[r] = self.players[with].hand[r] + t.give[r] - t.want[r];
         }
         self.trades.retain(|o| o.id != id);
         self.log(LogEvent::TradeCompleted { player: p, with });
@@ -1613,10 +1595,10 @@ impl Game {
             return;
         }
         let players = &self.players;
-        self.trades.retain(|t| covers(&players[t.from].hand, &t.give));
+        self.trades.retain(|t| players[t.from].hand.covers(&t.give));
         for t in &mut self.trades {
-            for q in 0..players.len() {
-                if t.replies[q] == Reply::Accepted && !covers(&players[q].hand, &t.want) {
+            for q in PlayerId::range(players.len()) {
+                if t.replies[q] == Reply::Accepted && !players[q].hand.covers(&t.want) {
                     t.replies[q] = Reply::Pending;
                 }
             }
@@ -1628,10 +1610,10 @@ impl Game {
             return Err("You can't end your turn right now".into());
         }
         let p = self.current;
-        for k in 0..5 {
-            let c = self.players[p].dev_new[k];
-            self.players[p].dev[k] += c;
-            self.players[p].dev_new[k] = 0;
+        for card in DevCard::ALL {
+            let c = self.players[p].dev_new[card];
+            self.players[p].dev[card] += c;
+            self.players[p].dev_new[card] = 0;
         }
         self.trades.clear();
         self.dev_played = false;
@@ -1753,11 +1735,12 @@ impl Game {
             ClockKind::Discard => {
                 while self.phase == Phase::Discard {
                     let Some(&(q, need)) = self.discards.first() else { break };
-                    let mut pool: Vec<usize> = (0..5)
-                        .flat_map(|r| std::iter::repeat(r).take(self.players[q].hand[r] as usize))
+                    let mut pool: Vec<Resource> = Resource::ALL
+                        .iter()
+                        .flat_map(|&r| std::iter::repeat(r).take(self.players[q].hand[r] as usize))
                         .collect();
                     pool.shuffle(&mut rng);
-                    let mut cards = [0u8; 5];
+                    let mut cards = Res::ZERO;
                     for &r in pool.iter().take(need as usize) {
                         cards[r] += 1;
                     }
@@ -1814,9 +1797,11 @@ impl Game {
     // Views
     // ------------------------------------------------------------------
 
-    pub fn view<'a>(&'a self, you: usize, connected: &[bool]) -> GameView<'a> {
+    /// The view for seat `you`. `road_lens` is `self.longest_roads()`, passed in because it is the
+    /// same for every seat: a broadcast computes it once instead of once per view.
+    pub fn view<'a>(&'a self, you: PlayerId, connected: &PerPlayer<bool>, road_lens: &PerPlayer<usize>) -> GameView<'a> {
         let over = self.phase == Phase::GameOver;
-        let players = (0..self.n)
+        let players = PlayerId::range(self.n)
             .map(|i| {
                 let pl = &self.players[i];
                 PlayerView {
@@ -1824,14 +1809,14 @@ impl Game {
                     name: self.names[i].clone(),
                     color: self.colors[i].clone(),
                     connected: connected.get(i).copied().unwrap_or(true),
-                    cards: sum(&pl.hand),
-                    dev_cards: pl.dev.iter().chain(pl.dev_new.iter()).map(|&x| x as u32).sum(),
+                    cards: pl.hand.total(),
+                    dev_cards: pl.dev.total() + pl.dev_new.total(),
                     knights: pl.knights,
                     roads_left: pl.roads_left,
                     settlements_left: pl.settlements_left,
                     cities_left: pl.cities_left,
                     vp: self.vp_public(i),
-                    longest_road: self.longest_road(i),
+                    longest_road: road_lens[i],
                     vp_total: if over { Some(self.vp_total(i)) } else { None },
                     vp_breakdown: if over { Some(self.vp_breakdown(i)) } else { None },
                 }
@@ -1859,7 +1844,7 @@ impl Game {
             bank: self.bank,
             deck_left: self.deck.len(),
             dev_played: self.dev_played,
-            ratios: [0, 1, 2, 3, 4].map(|r| self.ratio(you, r)),
+            ratios: ByResource::from_fn(|r| self.ratio(you, r)),
             setup_needs: if self.phase == Phase::Setup {
                 Some(if self.setup_vertex.is_some() { "road" } else { "settlement" })
             } else {
@@ -1889,6 +1874,18 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const P0: PlayerId = PlayerId::new(0);
+    const P1: PlayerId = PlayerId::new(1);
+    const P2: PlayerId = PlayerId::new(2);
+
+    fn all_connected(n: usize) -> PerPlayer<bool> {
+        PerPlayer::from_fn(n, |_| true)
+    }
+
+    fn random_resource(rng: &mut impl Rng) -> Resource {
+        *Resource::ALL.choose(rng).unwrap()
+    }
 
     fn names(n: usize) -> Vec<String> {
         (0..n).map(|i| format!("P{i}")).collect()
@@ -1930,10 +1927,10 @@ mod tests {
                     .unwrap();
             }
         }
-        assert_eq!(order, vec![0, 1, 2, 2, 1, 0]);
+        assert_eq!(order, vec![P0, P1, P2, P2, P1, P0]);
         assert_eq!(g.phase, Phase::Roll);
-        assert_eq!(g.current, 0);
-        for p in 0..3 {
+        assert_eq!(g.current, P0);
+        for p in PlayerId::range(3) {
             assert_eq!(g.players[p].settlements_left, 3);
             assert_eq!(g.players[p].roads_left, 13);
         }
@@ -1942,21 +1939,21 @@ mod tests {
     #[test]
     fn not_your_turn_is_rejected() {
         let mut g = Game::new(names(2));
-        assert!(g.apply(1, Action::BuildSettlement { vertex: 0 }).is_err());
-        assert!(g.apply(0, Action::Roll).is_err());
+        assert!(g.apply(P1, Action::BuildSettlement { vertex: 0 }).is_err());
+        assert!(g.apply(P0, Action::Roll).is_err());
     }
 
     #[test]
     fn distance_rule_enforced() {
         let mut g = Game::new(names(2));
-        g.apply(0, Action::BuildSettlement { vertex: 0 }).unwrap();
+        g.apply(P0, Action::BuildSettlement { vertex: 0 }).unwrap();
         let e = g.board.vertices[0].edges[0];
-        g.apply(0, Action::BuildRoad { edge: e }).unwrap();
+        g.apply(P0, Action::BuildRoad { edge: e }).unwrap();
         let nb = g.board.vertices[0].neighbors[0];
-        assert!(g.apply(1, Action::BuildSettlement { vertex: nb }).is_err());
+        assert!(g.apply(P1, Action::BuildSettlement { vertex: nb }).is_err());
     }
 
-    fn line_of_roads(g: &mut Game, p: usize, count: usize) -> Vec<usize> {
+    fn line_of_roads(g: &mut Game, p: PlayerId, count: usize) -> Vec<usize> {
         // Find a simple path of `count` edges by DFS and give it to player p.
         fn dfs(g: &Game, v: usize, used: &mut Vec<usize>, count: usize) -> bool {
             if used.len() == count {
@@ -1996,48 +1993,74 @@ mod tests {
     fn longest_road_award_and_break() {
         let mut g = Game::new(names(3));
         g.phase = Phase::Main;
-        let path = line_of_roads(&mut g, 0, 5);
-        assert_eq!(g.longest_road(0), 5);
+        let path = line_of_roads(&mut g, P0, 5);
+        assert_eq!(g.longest_road(P0), 5);
         g.update_longest_road();
-        assert_eq!(g.longest_road_holder, Some(0));
-        assert_eq!(g.vp_public(0), 2);
+        assert_eq!(g.longest_road_holder, Some(P0));
+        assert_eq!(g.vp_public(P0), 2);
 
         // An opponent settlement in the middle of the path breaks it.
         let mid = {
             let (e1, e2) = (&g.board.edges[path[2]], &g.board.edges[path[3]]);
             [e1.a, e1.b].into_iter().find(|v| *v == e2.a || *v == e2.b).unwrap()
         };
-        g.buildings[mid] = Some(Building { owner: 1, city: false });
-        assert!(g.longest_road(0) < 5);
+        g.buildings[mid] = Some(Building { owner: P1, city: false });
+        assert!(g.longest_road(P0) < 5);
         g.update_longest_road();
         assert_eq!(g.longest_road_holder, None);
     }
 
     #[test]
+    fn longest_roads_match_the_per_player_search_and_feed_every_view() {
+        let mut g = Game::new(names(3));
+        g.phase = Phase::Main;
+        let path = line_of_roads(&mut g, P0, 5);
+        // One road for P1 on the last edge, which the search for P0's path (from vertex 0) never reaches.
+        let far = g.roads.len() - 1;
+        assert!(!path.contains(&far));
+        g.roads[far] = Some(P1);
+
+        let lens = g.longest_roads();
+        for p in PlayerId::range(3) {
+            assert_eq!(lens[p], g.longest_road(p));
+        }
+        assert_eq!((lens[P0], lens[P1], lens[P2]), (5, 1, 0));
+
+        // Every seat's view reports the shared lengths, even though no award update has run.
+        for you in PlayerId::range(3) {
+            let v = g.view(you, &all_connected(3), &lens);
+            for p in PlayerId::range(3) {
+                assert_eq!(v.players[p.index()].longest_road, lens[p]);
+            }
+        }
+    }
+
+    #[test]
     fn largest_army_requires_three_and_must_be_beaten() {
         let mut g = Game::new(names(3));
-        g.players[0].knights = 3;
-        g.update_largest_army(0);
-        assert_eq!(g.largest_army_holder, Some(0));
-        g.players[1].knights = 3;
-        g.update_largest_army(1);
-        assert_eq!(g.largest_army_holder, Some(0));
-        g.players[1].knights = 4;
-        g.update_largest_army(1);
-        assert_eq!(g.largest_army_holder, Some(1));
+        g.players[P0].knights = 3;
+        g.update_largest_army(P0);
+        assert_eq!(g.largest_army_holder, Some(P0));
+        g.players[P1].knights = 3;
+        g.update_largest_army(P1);
+        assert_eq!(g.largest_army_holder, Some(P0));
+        g.players[P1].knights = 4;
+        g.update_largest_army(P1);
+        assert_eq!(g.largest_army_holder, Some(P1));
     }
 
     #[test]
     fn bank_trade_ratios_with_ports() {
         let mut g = Game::new(names(2));
-        assert_eq!(g.ratio(0, BRICK), 4);
+        assert_eq!(g.ratio(P0, Resource::Brick), 4);
         let port = g.board.ports[0].clone();
-        g.buildings[port.a] = Some(Building { owner: 0, city: false });
+        g.buildings[port.a] = Some(Building { owner: P0, city: false });
         match port.resource {
-            None => assert_eq!(g.ratio(0, BRICK), 3),
+            None => assert_eq!(g.ratio(P0, Resource::Brick), 3),
             Some(r) => {
-                assert_eq!(g.ratio(0, r), 2);
-                assert_eq!(g.ratio(0, (r + 1) % 5), 4);
+                assert_eq!(g.ratio(P0, r), 2);
+                let other = Resource::from_index((r.index() + 1) % 5).unwrap();
+                assert_eq!(g.ratio(P0, other), 4);
             }
         }
     }
@@ -2058,23 +2081,23 @@ mod tests {
                         .all(|&o| o == h || g.board.hexes[o].number != g.board.hexes[h].number)
                 })
                 .expect("some corner always qualifies");
-            g.buildings[v] = Some(Building { owner: 0, city: true });
+            g.buildings[v] = Some(Building { owner: P0, city: true });
             let roll = g.board.hexes[h].number.unwrap();
             g.robber = h;
             g.distribute(roll);
-            assert_eq!(sum(&g.players[0].hand), 0, "robber must block the hex");
+            assert_eq!(g.players[P0].hand.total(), 0, "robber must block the hex");
             g.robber = g.board.desert;
             g.distribute(roll);
-            assert_eq!(sum(&g.players[0].hand), 2, "a city on one producing hex pays 2");
+            assert_eq!(g.players[P0].hand.total(), 2, "a city on one producing hex pays 2");
         }
     }
 
     fn invariants(g: &Game) {
-        for r in 0..5 {
+        for r in Resource::ALL {
             let held: u32 = g.players.iter().map(|p| p.hand[r] as u32).sum();
-            assert_eq!(held + g.bank[r] as u32, g.settings.resource_max as u32, "resource {r} not conserved");
+            assert_eq!(held + g.bank[r] as u32, g.settings.resource_max as u32, "{} not conserved", r.name());
         }
-        for p in 0..g.n {
+        for p in PlayerId::range(g.n) {
             let roads = g.roads.iter().filter(|r| **r == Some(p)).count() as u8;
             assert_eq!(roads + g.players[p].roads_left, g.settings.max_roads);
             let s = g.buildings.iter().flatten().filter(|b| b.owner == p && !b.city).count() as u8;
@@ -2093,10 +2116,10 @@ mod tests {
             assert_eq!(ids.len(), g.trades.len(), "trade ids are unique");
             for t in &g.trades {
                 assert_eq!(t.from, g.current);
-                assert!(covers(&g.players[t.from].hand, &t.give), "proposer cannot pay for an open offer");
-                for q in 0..g.n {
+                assert!(g.players[t.from].hand.covers(&t.give), "proposer cannot pay for an open offer");
+                for q in PlayerId::range(g.n) {
                     if t.replies[q] == Reply::Accepted {
-                        assert!(covers(&g.players[q].hand, &t.want), "an accepter cannot pay");
+                        assert!(g.players[q].hand.covers(&t.want), "an accepter cannot pay");
                     }
                 }
             }
@@ -2125,7 +2148,7 @@ mod tests {
                 Phase::Roll => {
                     // cheat: top up the current hand from the bank
                     for _ in 0..3 {
-                        let r = rng.gen_range(0..5);
+                        let r = random_resource(rng);
                         if g.bank[r] > 0 {
                             g.bank[r] -= 1;
                             g.players[p].hand[r] += 1;
@@ -2141,10 +2164,10 @@ mod tests {
                 Phase::Discard => {
                     let pending = g.discards.clone();
                     for (q, k) in pending {
-                        let mut cards = [0u8; 5];
+                        let mut cards = Res::ZERO;
                         let mut left = k;
                         while left > 0 {
-                            let r = rng.gen_range(0..5);
+                            let r = random_resource(rng);
                             if g.players[q].hand[r] > cards[r] {
                                 cards[r] += 1;
                                 left -= 1;
@@ -2192,32 +2215,32 @@ mod tests {
                             let a = match rng.gen_range(0..4) {
                                 0 => Action::PlayKnight,
                                 1 => Action::PlayRoadBuilding,
-                                2 => Action::PlayYearOfPlenty { a: rng.gen_range(0..5), b: rng.gen_range(0..5) },
-                                _ => Action::PlayMonopoly { resource: rng.gen_range(0..5) },
+                                2 => Action::PlayYearOfPlenty { a: random_resource(rng), b: random_resource(rng) },
+                                _ => Action::PlayMonopoly { resource: random_resource(rng) },
                             };
                             let _ = g.apply(p, a);
                         }
                         10 => {
-                            let _ = g.apply(p, Action::BankTrade { give: rng.gen_range(0..5), get: rng.gen_range(0..5) });
+                            let _ = g.apply(p, Action::BankTrade { give: random_resource(rng), get: random_resource(rng) });
                         }
                         11 => {
                             // Several offers at once, answered and confirmed in random order.
                             for _ in 0..rng.gen_range(1..=3) {
-                                let mut give = [0u8; 5];
-                                let mut want = [0u8; 5];
-                                give[rng.gen_range(0..5)] = rng.gen_range(1..3);
-                                want[rng.gen_range(0..5)] = rng.gen_range(1..3);
+                                let mut give = Res::ZERO;
+                                let mut want = Res::ZERO;
+                                give[random_resource(rng)] = rng.gen_range(1..3);
+                                want[random_resource(rng)] = rng.gen_range(1..3);
                                 let _ = g.apply(p, Action::OfferTrade { give, want });
                             }
                             let ids: Vec<u32> = g.trades.iter().map(|t| t.id).collect();
                             for id in ids {
-                                for q in 0..g.n {
+                                for q in PlayerId::range(g.n) {
                                     if q != p {
                                         let _ = g.apply(q, Action::RespondTrade { id, accept: rng.gen_bool(0.5) });
                                     }
                                 }
                                 invariants(g);
-                                let _ = g.apply(p, Action::ConfirmTrade { id, with: rng.gen_range(0..g.n) });
+                                let _ = g.apply(p, Action::ConfirmTrade { id, with: PlayerId::new(rng.gen_range(0..g.n)) });
                                 invariants(g);
                                 if rng.gen_bool(0.5) {
                                     let _ = g.apply(p, Action::CancelTrade { id });
@@ -2388,11 +2411,11 @@ mod tests {
     #[test]
     fn players_keep_their_chosen_colors() {
         let g = Game::with_colors(names(2), vec!["#000000".into(), "#FFFFFF".into()]);
-        let v = g.view(0, &[true, true]);
+        let v = g.view(P0, &all_connected(2), &g.longest_roads());
         assert_eq!(v.players[0].color, "#000000");
         assert_eq!(v.players[1].color, "#FFFFFF");
         // `Game::new` hands out palette colors in seat order
-        assert_eq!(Game::new(names(3)).colors, vec![PALETTE[0], PALETTE[1], PALETTE[2]]);
+        assert_eq!(Game::new(names(3)).colors, PerPlayer::from(vec![PALETTE[0].to_string(), PALETTE[1].to_string(), PALETTE[2].to_string()]));
     }
 
     #[test]
@@ -2426,7 +2449,7 @@ mod tests {
     }
 
     /// Put the game straight into the main phase of player `p`'s turn at `t`.
-    fn into_main(g: &mut Game, p: usize, t: Instant) {
+    fn into_main(g: &mut Game, p: PlayerId, t: Instant) {
         g.phase = Phase::Main;
         g.current = p;
         g.rolled = true;
@@ -2442,7 +2465,7 @@ mod tests {
             let mut g = Game::with_options(names(3), colors, TimerMode::Fast, Settings::default(), "standard");
             let mut sorted = g.order.clone();
             sorted.sort();
-            assert_eq!(sorted, vec![0, 1, 2], "order is a permutation of the seats");
+            assert_eq!(sorted, vec![P0, P1, P2], "order is a permutation of the seats");
             seen.insert(g.order.clone());
 
             let o = g.order.clone();
@@ -2570,12 +2593,12 @@ mod tests {
         let t0 = Instant::now();
         let mut g = timed(3, TimerMode::Normal, t0);
         g.phase = Phase::Roll;
-        g.current = 0;
+        g.current = P0;
         g.sync_clock(t0);
         // players 0 and 1 are over the limit; player 2 is not
-        g.players[0].hand = [3, 3, 3, 0, 0]; // 9 -> discard 4
-        g.players[1].hand = [2, 2, 2, 2, 0]; // 8 -> discard 4
-        g.players[2].hand = [1, 1, 0, 0, 0];
+        g.players[P0].hand = Res::new(3, 3, 3, 0, 0); // 9 -> discard 4
+        g.players[P1].hand = Res::new(2, 2, 2, 2, 0); // 8 -> discard 4
+        g.players[P2].hand = Res::new(1, 1, 0, 0, 0);
         g.dice = Some((3, 4));
         g.rolled = true;
         g.resolve_roll(7);
@@ -2584,12 +2607,12 @@ mod tests {
         assert_eq!((g.phase, c.kind, c.total), (Phase::Discard, ClockKind::Discard, secs(20)));
 
         // one player discards in time, the other does not
-        g.apply_at(1, Action::Discard { cards: [1, 1, 1, 1, 0] }, t0 + secs(12)).unwrap();
+        g.apply_at(P1, Action::Discard { cards: Res::new(1, 1, 1, 1, 0) }, t0 + secs(12)).unwrap();
         assert_eq!(g.phase, Phase::Discard);
         assert!(!g.tick(t0 + secs(24)), "20s from the 7, not from the first discard");
         assert!(g.tick(t0 + secs(26)), "20s after the 7 the rest are discarded at random");
-        assert_eq!(sum(&g.players[0].hand), 5);
-        assert_eq!(sum(&g.players[1].hand), 4);
+        assert_eq!(g.players[P0].hand.total(), 5);
+        assert_eq!(g.players[P1].hand.total(), 4);
         assert_eq!(g.phase, Phase::MoveRobber);
         let c = g.clock.unwrap();
         assert_eq!((c.kind, c.total), (ClockKind::Robber, secs(20)));
@@ -2617,16 +2640,16 @@ mod tests {
     fn steal_victim_is_chosen_at_random_after_15s() {
         let t0 = Instant::now();
         let mut g = timed(3, TimerMode::Normal, t0);
-        into_main(&mut g, 0, t0);
+        into_main(&mut g, P0, t0);
         g.phase = Phase::Steal;
-        g.steal_candidates = vec![1, 2];
-        g.players[1].hand = [1, 0, 0, 0, 0];
-        g.players[2].hand = [0, 1, 0, 0, 0];
+        g.steal_candidates = vec![P1, P2];
+        g.players[P1].hand = Res::new(1, 0, 0, 0, 0);
+        g.players[P2].hand = Res::new(0, 1, 0, 0, 0);
         g.sync_clock(t0);
         assert_eq!(g.clock.unwrap().kind, ClockKind::Steal);
         assert!(!g.tick(t0 + secs(14)));
         assert!(g.tick(t0 + secs(16)));
-        assert_eq!(sum(&g.players[0].hand), 1, "one card was stolen");
+        assert_eq!(g.players[P0].hand.total(), 1, "one card was stolen");
         assert_eq!(g.phase, Phase::Main);
     }
 
@@ -2634,14 +2657,14 @@ mod tests {
     fn turn_clock_runs_out_and_the_turn_passes() {
         let t0 = Instant::now();
         let mut g = timed(3, TimerMode::VeryFast, t0);
-        into_main(&mut g, 1, t0);
+        into_main(&mut g, P1, t0);
         assert_eq!(g.clock.unwrap().kind, ClockKind::Turn);
         assert!(!g.tick(t0 + secs(29)));
         assert!(g.tick(t0 + secs(31)));
-        assert_eq!(g.current, 2);
+        assert_eq!(g.current, P2);
         assert_eq!(g.phase, Phase::Roll);
         let c = g.clock.unwrap();
-        assert_eq!((c.player, c.kind, c.total), (2, ClockKind::Roll, secs(10)));
+        assert_eq!((c.player, c.kind, c.total), (P2, ClockKind::Roll, secs(10)));
         assert_eq!(g.turn_left, secs(30), "the next player starts with a full turn clock");
     }
 
@@ -2654,7 +2677,7 @@ mod tests {
         let p = g.current;
         g.sync_clock(t0);
         into_main(&mut g, p, t0);
-        g.players[p].dev[ROAD_BUILDING] = 1;
+        g.players[p].dev[DevCard::RoadBuilding] = 1;
         g.apply_at(p, Action::PlayRoadBuilding, t0 + secs(1)).unwrap();
         assert_eq!(g.phase, Phase::RoadBuilding);
         let roads_before = g.roads.iter().flatten().count();
@@ -2671,7 +2694,7 @@ mod tests {
         run_setup(&mut g, &mut rng);
         let p = g.current;
         into_main(&mut g, p, t0);
-        g.players[p].hand = [9, 9, 9, 9, 9];
+        g.players[p].hand = Res::new(9, 9, 9, 9, 9);
 
         // 8s used (22s left): +10 would be 32, so it is capped at the 30s start
         let road = g.legal(p).roads[0];
@@ -2688,7 +2711,7 @@ mod tests {
         // a bank trade gives +10s as well
         let t = t0 + secs(27);
         assert!((left(&g, t) - 21.0).abs() < 0.01);
-        g.apply_at(p, Action::BankTrade { give: 0, get: 2 }, t).unwrap();
+        g.apply_at(p, Action::BankTrade { give: Resource::Brick, get: Resource::Ore }, t).unwrap();
         assert!((left(&g, t) - 30.0).abs() < 0.01, "21s + 10s, capped at the 30s start");
 
         // a settlement (when one is legal) gives +10 up to the cap
@@ -2712,14 +2735,14 @@ mod tests {
     fn completed_trades_earn_a_bonus_but_replies_alone_do_not() {
         let t0 = Instant::now();
         let mut g = timed(2, TimerMode::Slow, t0);
-        into_main(&mut g, 0, t0);
-        g.players[0].hand = [2, 0, 0, 0, 0];
-        g.players[1].hand = [0, 2, 0, 0, 0];
-        g.apply_at(0, Action::OfferTrade { give: [1, 0, 0, 0, 0], want: [0, 1, 0, 0, 0] }, t0 + secs(100)).unwrap();
+        into_main(&mut g, P0, t0);
+        g.players[P0].hand = Res::new(2, 0, 0, 0, 0);
+        g.players[P1].hand = Res::new(0, 2, 0, 0, 0);
+        g.apply_at(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 1, 0, 0, 0) }, t0 + secs(100)).unwrap();
         let id = g.trades[0].id;
-        g.apply_at(1, Action::RespondTrade { id, accept: true }, t0 + secs(101)).unwrap();
+        g.apply_at(P1, Action::RespondTrade { id, accept: true }, t0 + secs(101)).unwrap();
         assert!((left(&g, t0 + secs(101)) - 139.0).abs() < 0.01, "no bonus yet");
-        g.apply_at(0, Action::ConfirmTrade { id, with: 1 }, t0 + secs(102)).unwrap();
+        g.apply_at(P0, Action::ConfirmTrade { id, with: P1 }, t0 + secs(102)).unwrap();
         assert!((left(&g, t0 + secs(102)) - 148.0).abs() < 0.01, "138s + 10s");
     }
 
@@ -2727,17 +2750,17 @@ mod tests {
     fn a_bank_trade_gives_a_10s_bonus_capped_at_the_mode_start() {
         let t0 = Instant::now();
         let mut g = timed(2, TimerMode::Slow, t0);
-        into_main(&mut g, 0, t0);
-        g.players[0].hand = [8, 0, 0, 0, 0];
+        into_main(&mut g, P0, t0);
+        g.players[P0].hand = Res::new(8, 0, 0, 0, 0);
         // 5s used: 235s left, +10 would be 245, so it is capped at the 240s start
-        g.apply_at(0, Action::BankTrade { give: 0, get: 2 }, t0 + secs(5)).unwrap();
+        g.apply_at(P0, Action::BankTrade { give: Resource::Brick, get: Resource::Ore }, t0 + secs(5)).unwrap();
         assert!((left(&g, t0 + secs(5)) - 240.0).abs() < 0.01, "capped at the mode start");
         // 100s later 140s are left, so the bonus is the full 10s
-        g.apply_at(0, Action::BankTrade { give: 0, get: 3 }, t0 + secs(105)).unwrap();
+        g.apply_at(P0, Action::BankTrade { give: Resource::Brick, get: Resource::Grain }, t0 + secs(105)).unwrap();
         assert!((left(&g, t0 + secs(105)) - 150.0).abs() < 0.01, "140s + 10s");
         // a refused bank trade (no cards to give) earns nothing
         let before = left(&g, t0 + secs(106));
-        assert!(g.apply_at(0, Action::BankTrade { give: 1, get: 2 }, t0 + secs(106)).is_err());
+        assert!(g.apply_at(P0, Action::BankTrade { give: Resource::Lumber, get: Resource::Ore }, t0 + secs(106)).is_err());
         assert!((left(&g, t0 + secs(106)) - before).abs() < 0.01);
     }
 
@@ -2745,52 +2768,52 @@ mod tests {
     fn trading_game() -> Game {
         let mut g = Game::new(names(3));
         g.phase = Phase::Main;
-        g.current = 0;
+        g.current = P0;
         g.rolled = true;
-        g.players[0].hand = [3, 0, 0, 0, 0];
-        g.players[1].hand = [0, 2, 2, 0, 0];
-        g.players[2].hand = [0, 0, 2, 2, 0];
+        g.players[P0].hand = Res::new(3, 0, 0, 0, 0);
+        g.players[P1].hand = Res::new(0, 2, 2, 0, 0);
+        g.players[P2].hand = Res::new(0, 0, 2, 2, 0);
         g
     }
 
     #[test]
     fn several_offers_can_be_open_at_once_and_are_answered_separately() {
         let mut g = trading_game();
-        g.apply(0, Action::OfferTrade { give: [1, 0, 0, 0, 0], want: [0, 1, 0, 0, 0] }).unwrap();
-        g.apply(0, Action::OfferTrade { give: [1, 0, 0, 0, 0], want: [0, 0, 1, 0, 0] }).unwrap();
-        g.apply(0, Action::OfferTrade { give: [2, 0, 0, 0, 0], want: [0, 0, 0, 1, 0] }).unwrap();
+        g.apply(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 1, 0, 0, 0) }).unwrap();
+        g.apply(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 0, 1, 0, 0) }).unwrap();
+        g.apply(P0, Action::OfferTrade { give: Res::new(2, 0, 0, 0, 0), want: Res::new(0, 0, 0, 1, 0) }).unwrap();
         assert_eq!(g.trades.len(), 3);
         let ids: Vec<u32> = g.trades.iter().map(|t| t.id).collect();
         assert_eq!(ids, vec![0, 1, 2]);
 
         // player 1 declines the first and accepts the second; player 2 accepts the third
-        g.apply(1, Action::RespondTrade { id: 0, accept: false }).unwrap();
-        g.apply(1, Action::RespondTrade { id: 1, accept: true }).unwrap();
-        g.apply(2, Action::RespondTrade { id: 2, accept: true }).unwrap();
-        assert_eq!(g.trades[0].replies[1], Reply::Declined);
-        assert_eq!(g.trades[0].replies[2], Reply::Pending, "replies are per offer");
-        assert_eq!(g.trades[1].replies[1], Reply::Accepted);
-        assert_eq!(g.trades[1].replies[0], Reply::Proposer);
+        g.apply(P1, Action::RespondTrade { id: 0, accept: false }).unwrap();
+        g.apply(P1, Action::RespondTrade { id: 1, accept: true }).unwrap();
+        g.apply(P2, Action::RespondTrade { id: 2, accept: true }).unwrap();
+        assert_eq!(g.trades[0].replies[P1], Reply::Declined);
+        assert_eq!(g.trades[0].replies[P2], Reply::Pending, "replies are per offer");
+        assert_eq!(g.trades[1].replies[P1], Reply::Accepted);
+        assert_eq!(g.trades[1].replies[P0], Reply::Proposer);
 
         // the proposer withdraws one; the others are untouched
-        g.apply(0, Action::CancelTrade { id: 0 }).unwrap();
+        g.apply(P0, Action::CancelTrade { id: 0 }).unwrap();
         assert_eq!(g.trades.iter().map(|t| t.id).collect::<Vec<_>>(), vec![1, 2]);
-        assert!(g.apply(0, Action::CancelTrade { id: 0 }).is_err(), "already gone");
-        assert!(g.apply(1, Action::RespondTrade { id: 0, accept: true }).is_err(), "can't answer a gone offer");
+        assert!(g.apply(P0, Action::CancelTrade { id: 0 }).is_err(), "already gone");
+        assert!(g.apply(P1, Action::RespondTrade { id: 0, accept: true }).is_err(), "can't answer a gone offer");
     }
 
     #[test]
     fn identical_offers_and_too_many_offers_are_refused() {
         let mut g = trading_game();
-        g.players[0].hand = [9, 0, 0, 0, 0];
-        let offer = Action::OfferTrade { give: [1, 0, 0, 0, 0], want: [0, 1, 0, 0, 0] };
-        g.apply(0, offer.clone()).unwrap();
-        assert!(g.apply(0, offer).is_err(), "same give and want twice");
+        g.players[P0].hand = Res::new(9, 0, 0, 0, 0);
+        let offer = Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 1, 0, 0, 0) };
+        g.apply(P0, offer.clone()).unwrap();
+        assert!(g.apply(P0, offer).is_err(), "same give and want twice");
         for k in 2..=MAX_OPEN_TRADES as u8 {
-            g.apply(0, Action::OfferTrade { give: [1, 0, 0, 0, 0], want: [0, k, 0, 0, 0] }).unwrap();
+            g.apply(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, k, 0, 0, 0) }).unwrap();
         }
         assert_eq!(g.trades.len(), MAX_OPEN_TRADES);
-        assert!(g.apply(0, Action::OfferTrade { give: [1, 0, 0, 0, 0], want: [0, 0, 0, 0, 1] }).is_err());
+        assert!(g.apply(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 0, 0, 0, 1) }).is_err());
     }
 
     #[test]
@@ -2798,20 +2821,20 @@ mod tests {
         let mut g = trading_game();
         // Offers A and B each need 2 of player 0's 3 brick, so only one can ever complete.
         // C needs 1 brick and stays payable after A completes.
-        g.apply(0, Action::OfferTrade { give: [2, 0, 0, 0, 0], want: [0, 1, 0, 0, 0] }).unwrap(); // A = 0
-        g.apply(0, Action::OfferTrade { give: [2, 0, 0, 0, 0], want: [0, 0, 1, 0, 0] }).unwrap(); // B = 1
-        g.apply(0, Action::OfferTrade { give: [1, 0, 0, 0, 0], want: [0, 0, 0, 1, 0] }).unwrap(); // C = 2
-        g.apply(1, Action::RespondTrade { id: 0, accept: true }).unwrap();
-        g.apply(1, Action::RespondTrade { id: 1, accept: true }).unwrap();
-        g.apply(2, Action::RespondTrade { id: 2, accept: true }).unwrap();
+        g.apply(P0, Action::OfferTrade { give: Res::new(2, 0, 0, 0, 0), want: Res::new(0, 1, 0, 0, 0) }).unwrap(); // A = 0
+        g.apply(P0, Action::OfferTrade { give: Res::new(2, 0, 0, 0, 0), want: Res::new(0, 0, 1, 0, 0) }).unwrap(); // B = 1
+        g.apply(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 0, 0, 1, 0) }).unwrap(); // C = 2
+        g.apply(P1, Action::RespondTrade { id: 0, accept: true }).unwrap();
+        g.apply(P1, Action::RespondTrade { id: 1, accept: true }).unwrap();
+        g.apply(P2, Action::RespondTrade { id: 2, accept: true }).unwrap();
 
-        g.apply(0, Action::ConfirmTrade { id: 0, with: 1 }).unwrap();
-        assert_eq!(g.players[0].hand, [1, 1, 0, 0, 0]);
-        assert_eq!(g.players[1].hand, [2, 1, 2, 0, 0]);
+        g.apply(P0, Action::ConfirmTrade { id: 0, with: P1 }).unwrap();
+        assert_eq!(g.players[P0].hand, Res::new(1, 1, 0, 0, 0));
+        assert_eq!(g.players[P1].hand, Res::new(2, 1, 2, 0, 0));
         // B needs 2 brick and only 1 is left: withdrawn. C survives.
         assert_eq!(g.trades.iter().map(|t| t.id).collect::<Vec<_>>(), vec![2]);
-        g.apply(0, Action::ConfirmTrade { id: 2, with: 2 }).unwrap();
-        assert_eq!(g.players[0].hand, [0, 1, 0, 1, 0]);
+        g.apply(P0, Action::ConfirmTrade { id: 2, with: P2 }).unwrap();
+        assert_eq!(g.players[P0].hand, Res::new(0, 1, 0, 1, 0));
         assert!(g.trades.is_empty());
     }
 
@@ -2819,36 +2842,36 @@ mod tests {
     fn an_accepter_who_can_no_longer_pay_is_asked_again() {
         let mut g = trading_game();
         // Player 1 accepts two offers that both ask for 2 ore; completing one uses it up.
-        g.apply(0, Action::OfferTrade { give: [1, 0, 0, 0, 0], want: [0, 0, 2, 0, 0] }).unwrap(); // 0
-        g.apply(0, Action::OfferTrade { give: [2, 0, 0, 0, 0], want: [0, 0, 2, 0, 0] }).unwrap(); // 1
-        g.apply(1, Action::RespondTrade { id: 0, accept: true }).unwrap();
-        g.apply(1, Action::RespondTrade { id: 1, accept: true }).unwrap();
-        g.apply(0, Action::ConfirmTrade { id: 0, with: 1 }).unwrap();
+        g.apply(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 0, 2, 0, 0) }).unwrap(); // 0
+        g.apply(P0, Action::OfferTrade { give: Res::new(2, 0, 0, 0, 0), want: Res::new(0, 0, 2, 0, 0) }).unwrap(); // 1
+        g.apply(P1, Action::RespondTrade { id: 0, accept: true }).unwrap();
+        g.apply(P1, Action::RespondTrade { id: 1, accept: true }).unwrap();
+        g.apply(P0, Action::ConfirmTrade { id: 0, with: P1 }).unwrap();
         assert_eq!(g.trades.len(), 1);
-        assert_eq!(g.trades[0].replies[1], Reply::Pending, "player 1 spent the ore, so must answer again");
-        assert!(g.apply(0, Action::ConfirmTrade { id: 1, with: 1 }).is_err());
+        assert_eq!(g.trades[0].replies[P1], Reply::Pending, "player 1 spent the ore, so must answer again");
+        assert!(g.apply(P0, Action::ConfirmTrade { id: 1, with: P1 }).is_err());
     }
 
     #[test]
     fn a_bank_trade_withdraws_offers_the_proposer_can_no_longer_pay() {
         let mut g = trading_game();
-        g.players[0].hand = [4, 1, 1, 1, 1];
-        g.apply(0, Action::OfferTrade { give: [4, 0, 0, 0, 0], want: [0, 0, 1, 0, 0] }).unwrap();
-        g.apply(0, Action::OfferTrade { give: [0, 1, 0, 0, 0], want: [0, 0, 1, 0, 0] }).unwrap();
+        g.players[P0].hand = Res::new(4, 1, 1, 1, 1);
+        g.apply(P0, Action::OfferTrade { give: Res::new(4, 0, 0, 0, 0), want: Res::new(0, 0, 1, 0, 0) }).unwrap();
+        g.apply(P0, Action::OfferTrade { give: Res::new(0, 1, 0, 0, 0), want: Res::new(0, 0, 1, 0, 0) }).unwrap();
         // 4:1 with the bank spends all the brick
-        g.apply(0, Action::BankTrade { give: BRICK, get: ORE }).unwrap();
+        g.apply(P0, Action::BankTrade { give: Resource::Brick, get: Resource::Ore }).unwrap();
         assert_eq!(g.trades.len(), 1);
-        assert_eq!(g.trades[0].give, [0, 1, 0, 0, 0]);
+        assert_eq!(g.trades[0].give, Res::new(0, 1, 0, 0, 0));
     }
 
     #[test]
     fn declined_offers_stay_visible_to_the_proposer_as_declined() {
         let mut g = trading_game();
-        g.apply(0, Action::OfferTrade { give: [1, 0, 0, 0, 0], want: [0, 1, 0, 0, 0] }).unwrap();
-        g.apply(1, Action::RespondTrade { id: 0, accept: false }).unwrap();
-        let v = g.view(0, &[true; 3]);
+        g.apply(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 1, 0, 0, 0) }).unwrap();
+        g.apply(P1, Action::RespondTrade { id: 0, accept: false }).unwrap();
+        let v = g.view(P0, &all_connected(3), &g.longest_roads());
         assert_eq!(v.trades.len(), 1);
-        assert_eq!(v.trades[0].replies[1], Reply::Declined);
+        assert_eq!(v.trades[0].replies[P1], Reply::Declined);
         let json = serde_json::to_string(&v.trades).unwrap();
         assert!(json.contains("\"id\":0") && json.contains("\"declined\""), "{json}");
     }
@@ -2856,12 +2879,12 @@ mod tests {
     #[test]
     fn offers_end_with_the_turn_and_with_playing_a_development_card() {
         let mut g = trading_game();
-        g.players[0].dev[MONOPOLY] = 1;
-        g.apply(0, Action::OfferTrade { give: [1, 0, 0, 0, 0], want: [0, 1, 0, 0, 0] }).unwrap();
-        g.apply(0, Action::PlayMonopoly { resource: 1 }).unwrap();
+        g.players[P0].dev[DevCard::Monopoly] = 1;
+        g.apply(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 1, 0, 0, 0) }).unwrap();
+        g.apply(P0, Action::PlayMonopoly { resource: Resource::Lumber }).unwrap();
         assert!(g.trades.is_empty());
-        g.apply(0, Action::OfferTrade { give: [1, 0, 0, 0, 0], want: [0, 0, 1, 0, 0] }).unwrap();
-        g.apply(0, Action::EndTurn).unwrap();
+        g.apply(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 0, 1, 0, 0) }).unwrap();
+        g.apply(P0, Action::EndTurn).unwrap();
         assert!(g.trades.is_empty());
     }
 
@@ -2869,18 +2892,18 @@ mod tests {
     fn a_knight_pauses_the_turn_clock_for_the_whole_robber_sequence() {
         let t0 = Instant::now();
         let mut g = timed(2, TimerMode::Normal, t0);
-        into_main(&mut g, 0, t0);
-        g.players[0].dev[KNIGHT] = 1;
-        g.apply_at(0, Action::PlayKnight, t0 + secs(40)).unwrap();
+        into_main(&mut g, P0, t0);
+        g.players[P0].dev[DevCard::Knight] = 1;
+        g.apply_at(P0, Action::PlayKnight, t0 + secs(40)).unwrap();
         assert_eq!(g.clock.unwrap().kind, ClockKind::Robber);
-        let hex = g.legal(0).hexes[0];
+        let hex = g.legal(P0).hexes[0];
         // 15s spent choosing where to put the robber, then maybe 5s choosing a victim
         let mut last = t0 + secs(55);
-        g.apply_at(0, Action::MoveRobber { hex }, last).unwrap();
+        g.apply_at(P0, Action::MoveRobber { hex }, last).unwrap();
         if g.phase == Phase::Steal {
             let victim = g.steal_candidates[0];
             last = t0 + secs(60);
-            g.apply_at(0, Action::Steal { victim }, last).unwrap();
+            g.apply_at(P0, Action::Steal { victim }, last).unwrap();
         }
         assert_eq!(g.phase, Phase::Main);
         assert_eq!(g.clock.unwrap().kind, ClockKind::Turn);
@@ -2892,19 +2915,19 @@ mod tests {
         let t0 = Instant::now();
         let mut g = timed(2, TimerMode::Normal, t0);
         g.phase = Phase::Roll;
-        g.current = 0;
+        g.current = P0;
         g.rolled = false;
         g.sync_clock(t0);
-        g.players[0].dev[KNIGHT] = 1;
-        g.apply_at(0, Action::PlayKnight, t0 + secs(4)).unwrap(); // 6s of roll time left
+        g.players[P0].dev[DevCard::Knight] = 1;
+        g.apply_at(P0, Action::PlayKnight, t0 + secs(4)).unwrap(); // 6s of roll time left
         assert_eq!(g.clock.unwrap().kind, ClockKind::Robber);
-        let hex = g.legal(0).hexes[0];
+        let hex = g.legal(P0).hexes[0];
         let mut last = t0 + secs(10);
-        g.apply_at(0, Action::MoveRobber { hex }, last).unwrap();
+        g.apply_at(P0, Action::MoveRobber { hex }, last).unwrap();
         if g.phase == Phase::Steal {
             let victim = g.steal_candidates[0];
             last = t0 + secs(12);
-            g.apply_at(0, Action::Steal { victim }, last).unwrap();
+            g.apply_at(P0, Action::Steal { victim }, last).unwrap();
         }
         assert_eq!(g.phase, Phase::Roll);
         assert_eq!(g.clock.unwrap().kind, ClockKind::Roll);
@@ -2915,13 +2938,13 @@ mod tests {
     fn view_carries_the_countdown() {
         let t0 = Instant::now();
         let g = timed(2, TimerMode::Fast, t0);
-        let v = g.view(0, &[true, true]);
+        let v = g.view(P0, &all_connected(2), &g.longest_roads());
         let t = v.timer.unwrap();
         assert_eq!(t.kind, ClockKind::SetupSettlement);
         assert_eq!(t.total_ms, 120_000);
         assert!(t.remaining_ms <= 120_000);
         assert_eq!(v.timer_mode, TimerMode::Fast);
-        let json = serde_json::to_string(&g.view(0, &[true, true])).unwrap();
+        let json = serde_json::to_string(&g.view(P0, &all_connected(2), &g.longest_roads())).unwrap();
         assert!(json.contains("\"timer_mode\":\"fast\""));
         assert!(json.contains("\"kind\":\"setup_settlement\""));
     }
@@ -2930,7 +2953,7 @@ mod tests {
     fn no_clock_after_the_game_ends() {
         let t0 = Instant::now();
         let mut g = timed(2, TimerMode::Fast, t0);
-        into_main(&mut g, 0, t0);
+        into_main(&mut g, P0, t0);
         g.phase = Phase::GameOver;
         g.sync_clock(t0);
         assert!(g.clock.is_none());
@@ -2965,7 +2988,7 @@ mod tests {
         assert_eq!((d.longest_road_points, d.largest_army_points, d.vp_card_points), (2, 2, 1));
         assert_eq!((d.longest_road_min, d.largest_army_min, d.starting_settlements, d.bank_ratio), (5, 3, 2, 4));
         assert!(d.changes().is_empty(), "defaults log nothing");
-        assert_eq!(d.deck_counts(), [14, 2, 2, 2, 5]);
+        assert_eq!(d.deck_counts(), ByDev([14, 2, 2, 2, 5]));
         // A partial JSON object fills in the rest from the defaults.
         let s: Settings = serde_json::from_str("{\"points_to_win\":12}").unwrap();
         assert_eq!((s.points_to_win, s.max_roads), (12, 15));
@@ -3007,7 +3030,7 @@ mod tests {
             assert_eq!((s.resource_max, s.dev_cards), (bank, deck), "{n} players");
             assert_eq!(Settings { resource_max: d.resource_max, dev_cards: d.dev_cards, ..s }, d, "nothing else changes");
             assert_eq!(s.validate(), Ok(()));
-            assert_eq!(s.deck_counts().iter().sum::<usize>(), deck as usize);
+            assert_eq!(s.deck_counts().0.iter().sum::<usize>(), deck as usize);
         }
         // a value the host changed is left alone, the other one still grows
         let s = with(|s| { s.resource_max = 12; s.dev_cards = 10 }).scaled_for(8);
@@ -3026,7 +3049,7 @@ mod tests {
                 let scaled = Settings::default().scaled_for(n);
                 assert_eq!((g.n, g.settings), (n, scaled), "{map} with {n}");
                 assert_eq!(g.deck.len(), scaled.dev_cards as usize);
-                assert_eq!(g.bank, [scaled.resource_max; 5]);
+                assert_eq!(g.bank, Res::splat(scaled.resource_max));
                 assert!(!g.log.iter().any(|e| matches!(e, LogEvent::CustomRules { .. })), "scaling isn't a custom rule");
                 play_random(&mut g, &mut rng);
                 invariants(&g);
@@ -3039,17 +3062,17 @@ mod tests {
         for total in 0..=60u8 {
             let s = with(|s| s.dev_cards = total);
             let c = s.deck_counts();
-            assert_eq!(c.iter().sum::<usize>(), total as usize, "deck of {total}");
+            assert_eq!(c.0.iter().sum::<usize>(), total as usize, "deck of {total}");
             let g = Game::with_settings(names(2), s);
             assert_eq!(g.deck.len(), total as usize);
         }
-        assert_eq!(with(|s| s.dev_cards = 50).deck_counts(), [28, 4, 4, 4, 10]);
-        assert_eq!(with(|s| s.dev_cards = 10).deck_counts(), [5, 1, 1, 1, 2]);
+        assert_eq!(with(|s| s.dev_cards = 50).deck_counts(), ByDev([28, 4, 4, 4, 10]));
+        assert_eq!(with(|s| s.dev_cards = 10).deck_counts(), ByDev([5, 1, 1, 1, 2]));
         // an empty deck can't be bought from
         let mut g = Game::with_settings(names(2), with(|s| s.dev_cards = 0));
         g.phase = Phase::Main;
-        g.players[0].hand = [0, 0, 1, 1, 1];
-        assert!(g.apply(0, Action::BuyDev).is_err());
+        g.players[P0].hand = Res::new(0, 0, 1, 1, 1);
+        assert!(g.apply(P0, Action::BuyDev).is_err());
     }
 
     #[test]
@@ -3059,7 +3082,7 @@ mod tests {
         for p in &g.players {
             assert_eq!((p.roads_left, p.settlements_left, p.cities_left), (9, 3, 2));
         }
-        assert_eq!(g.bank, [7; 5]);
+        assert_eq!(g.bank, Res::splat(7));
         invariants(&g);
     }
 
@@ -3076,70 +3099,70 @@ mod tests {
         let mut g = Game::with_settings(names(3), s);
         g.phase = Phase::Main;
         let vs: Vec<usize> = (0..54).step_by(3).take(3).collect();
-        g.buildings[vs[0]] = Some(Building { owner: 0, city: false });
-        g.buildings[vs[1]] = Some(Building { owner: 0, city: true });
-        assert_eq!(g.vp_public(0), 2 + 3);
-        g.longest_road_holder = Some(0);
-        assert_eq!(g.vp_public(0), 2 + 3 + 1);
-        g.largest_army_holder = Some(0);
-        assert_eq!(g.vp_public(0), 2 + 3 + 1 + 4);
-        g.players[0].dev[VICTORY_POINT] = 1;
-        g.players[0].dev_new[VICTORY_POINT] = 1;
-        assert_eq!(g.vp_public(0), 10, "victory point cards stay hidden");
-        assert_eq!(g.vp_total(0), 10 + 2 * 2);
+        g.buildings[vs[0]] = Some(Building { owner: P0, city: false });
+        g.buildings[vs[1]] = Some(Building { owner: P0, city: true });
+        assert_eq!(g.vp_public(P0), 2 + 3);
+        g.longest_road_holder = Some(P0);
+        assert_eq!(g.vp_public(P0), 2 + 3 + 1);
+        g.largest_army_holder = Some(P0);
+        assert_eq!(g.vp_public(P0), 2 + 3 + 1 + 4);
+        g.players[P0].dev[DevCard::VictoryPoint] = 1;
+        g.players[P0].dev_new[DevCard::VictoryPoint] = 1;
+        assert_eq!(g.vp_public(P0), 10, "victory point cards stay hidden");
+        assert_eq!(g.vp_total(P0), 10 + 2 * 2);
         assert_eq!(
-            g.vp_breakdown(0),
+            g.vp_breakdown(P0),
             VpBreakdown { settlements: 2, cities: 3, dev_cards: 2 * 2, largest_army: 4, longest_road: 1 }
         );
-        let b = g.vp_breakdown(0);
-        assert_eq!(b.settlements + b.cities + b.dev_cards + b.largest_army + b.longest_road, g.vp_total(0));
+        let b = g.vp_breakdown(P0);
+        assert_eq!(b.settlements + b.cities + b.dev_cards + b.largest_army + b.longest_road, g.vp_total(P0));
         // 14 points is over 12: the current player wins on the spot
-        g.current = 0;
+        g.current = P0;
         g.check_win();
-        assert_eq!(g.winner, Some(0));
+        assert_eq!(g.winner, Some(P0));
         assert_eq!(g.phase, Phase::GameOver);
 
         // one point short of the target does not win
         let mut g = Game::with_settings(names(2), with(|s| s.points_to_win = 4));
         g.phase = Phase::Main;
-        g.buildings[0] = Some(Building { owner: 0, city: true });
-        g.buildings[10] = Some(Building { owner: 0, city: false });
+        g.buildings[0] = Some(Building { owner: P0, city: true });
+        g.buildings[10] = Some(Building { owner: P0, city: false });
         g.check_win();
         assert_eq!(g.winner, None, "3 points, 4 needed");
-        g.buildings[20] = Some(Building { owner: 0, city: false });
+        g.buildings[20] = Some(Building { owner: P0, city: false });
         g.check_win();
-        assert_eq!(g.winner, Some(0));
+        assert_eq!(g.winner, Some(P0));
     }
 
     #[test]
     fn default_target_is_15_not_10() {
         let mut g = Game::new(names(2));
         g.phase = Phase::Main;
-        g.players[0].dev[VICTORY_POINT] = 12;
+        g.players[P0].dev[DevCard::VictoryPoint] = 12;
         g.check_win();
         assert_eq!(g.winner, None, "12 points is not enough at the default 15");
-        g.players[0].dev[VICTORY_POINT] = 15;
+        g.players[P0].dev[DevCard::VictoryPoint] = 15;
         g.check_win();
-        assert_eq!(g.winner, Some(0));
+        assert_eq!(g.winner, Some(P0));
     }
 
     #[test]
     fn discard_limit_decides_who_discards() {
         let mut g = Game::with_settings(names(3), with(|s| s.discard_limit = 4));
         g.phase = Phase::Roll;
-        g.players[0].hand = [2, 2, 1, 0, 0]; // 5 > 4: discards 2
-        g.players[1].hand = [2, 2, 0, 0, 0]; // exactly 4: keeps all
-        g.players[2].hand = [3, 3, 3, 3, 0]; // 12: discards 6
+        g.players[P0].hand = Res::new(2, 2, 1, 0, 0); // 5 > 4: discards 2
+        g.players[P1].hand = Res::new(2, 2, 0, 0, 0); // exactly 4: keeps all
+        g.players[P2].hand = Res::new(3, 3, 3, 3, 0); // 12: discards 6
         g.resolve_roll(7);
         assert_eq!(g.phase, Phase::Discard);
         let mut d = g.discards.clone();
         d.sort();
-        assert_eq!(d, vec![(0, 2), (2, 6)]);
+        assert_eq!(d, vec![(P0, 2), (P2, 6)]);
 
         // With a high limit nobody discards and the robber moves straight away.
         let mut g = Game::with_settings(names(2), with(|s| s.discard_limit = 12));
         g.phase = Phase::Roll;
-        g.players[0].hand = [3, 3, 3, 3, 0];
+        g.players[P0].hand = Res::new(3, 3, 3, 3, 0);
         g.resolve_roll(7);
         assert_eq!(g.phase, Phase::MoveRobber);
     }
@@ -3149,60 +3172,60 @@ mod tests {
         // Longest Road from 3
         let mut g = Game::with_settings(names(3), with(|s| s.longest_road_min = 3));
         g.phase = Phase::Main;
-        line_of_roads(&mut g, 0, 3);
+        line_of_roads(&mut g, P0, 3);
         g.update_longest_road();
-        assert_eq!(g.longest_road_holder, Some(0));
+        assert_eq!(g.longest_road_holder, Some(P0));
         // ...and a 5-road line does not qualify when 7 are needed
         let mut g = Game::with_settings(names(3), with(|s| s.longest_road_min = 7));
         g.phase = Phase::Main;
-        line_of_roads(&mut g, 0, 5);
+        line_of_roads(&mut g, P0, 5);
         g.update_longest_road();
         assert_eq!(g.longest_road_holder, None);
 
         // Largest Army from 2, and from 5
         let mut g = Game::with_settings(names(3), with(|s| s.largest_army_min = 2));
-        g.players[0].knights = 2;
-        g.update_largest_army(0);
-        assert_eq!(g.largest_army_holder, Some(0));
+        g.players[P0].knights = 2;
+        g.update_largest_army(P0);
+        assert_eq!(g.largest_army_holder, Some(P0));
         let mut g = Game::with_settings(names(3), with(|s| s.largest_army_min = 5));
-        g.players[0].knights = 4;
-        g.update_largest_army(0);
+        g.players[P0].knights = 4;
+        g.update_largest_army(P0);
         assert_eq!(g.largest_army_holder, None);
-        g.players[0].knights = 5;
-        g.update_largest_army(0);
-        assert_eq!(g.largest_army_holder, Some(0));
+        g.players[P0].knights = 5;
+        g.update_largest_army(P0);
+        assert_eq!(g.largest_army_holder, Some(P0));
     }
 
     #[test]
     fn bank_ratio_is_the_base_and_harbours_only_improve_it() {
         let mut g = Game::with_settings(names(2), with(|s| s.bank_ratio = 5));
-        assert_eq!(g.ratio(0, BRICK), 5);
+        assert_eq!(g.ratio(P0, Resource::Brick), 5);
         let port = g.board.ports.iter().find(|p| p.resource.is_none()).unwrap().clone();
-        g.buildings[port.a] = Some(Building { owner: 0, city: false });
-        assert_eq!(g.ratio(0, BRICK), 3, "a 3:1 harbour beats a 5:1 base");
+        g.buildings[port.a] = Some(Building { owner: P0, city: false });
+        assert_eq!(g.ratio(P0, Resource::Brick), 3, "a 3:1 harbour beats a 5:1 base");
 
         // a 2:1 base is already better than a 3:1 harbour
         let mut g = Game::with_settings(names(2), with(|s| s.bank_ratio = 2));
-        g.buildings[port.a] = Some(Building { owner: 0, city: false });
-        assert_eq!(g.ratio(0, BRICK), 2, "a 3:1 harbour never makes a 2:1 base worse");
+        g.buildings[port.a] = Some(Building { owner: P0, city: false });
+        assert_eq!(g.ratio(P0, Resource::Brick), 2, "a 3:1 harbour never makes a 2:1 base worse");
         // and a 1:1 base is better than any harbour
         let mut g = Game::with_settings(names(2), with(|s| s.bank_ratio = 1));
-        g.buildings[port.a] = Some(Building { owner: 0, city: false });
-        assert_eq!(g.ratio(0, BRICK), 1);
+        g.buildings[port.a] = Some(Building { owner: P0, city: false });
+        assert_eq!(g.ratio(P0, Resource::Brick), 1);
 
         // the trade itself uses the ratio
         let mut g = Game::with_settings(names(2), with(|s| s.bank_ratio = 3));
         g.phase = Phase::Main;
-        g.players[0].hand = [3, 0, 0, 0, 0];
-        g.bank = [16, 19, 19, 19, 19];
-        g.apply(0, Action::BankTrade { give: BRICK, get: ORE }).unwrap();
-        assert_eq!(g.players[0].hand, [0, 0, 1, 0, 0]);
-        assert_eq!(g.bank[BRICK], 19);
-        assert_eq!(g.view(0, &[true, true]).ratios, [3; 5]);
+        g.players[P0].hand = Res::new(3, 0, 0, 0, 0);
+        g.bank = Res::new(16, 19, 19, 19, 19);
+        g.apply(P0, Action::BankTrade { give: Resource::Brick, get: Resource::Ore }).unwrap();
+        assert_eq!(g.players[P0].hand, Res::new(0, 0, 1, 0, 0));
+        assert_eq!(g.bank[Resource::Brick], 19);
+        assert_eq!(g.view(P0, &all_connected(2), &g.longest_roads()).ratios, Res::splat(3));
     }
 
     /// Run the whole setup phase with random legal moves; returns (player, vertex, step) per settlement.
-    fn setup_log(g: &mut Game, rng: &mut impl Rng) -> Vec<(usize, usize, usize)> {
+    fn setup_log(g: &mut Game, rng: &mut impl Rng) -> Vec<(PlayerId, usize, usize)> {
         let mut placed = vec![];
         while g.phase == Phase::Setup {
             let p = g.current;
@@ -3226,13 +3249,13 @@ mod tests {
                 let mut g = Game::with_settings(names(n), with(|s| s.starting_settlements = start));
                 let placed = setup_log(&mut g, &mut rng);
                 // snake order: forward, backward, forward...
-                let expect: Vec<usize> = (0..start as usize)
-                    .flat_map(|r| if r % 2 == 0 { (0..n).collect::<Vec<_>>() } else { (0..n).rev().collect() })
+                let expect: Vec<PlayerId> = (0..start as usize)
+                    .flat_map(|r| if r % 2 == 0 { PlayerId::range(n).collect::<Vec<_>>() } else { PlayerId::range(n).collect::<Vec<_>>().into_iter().rev().collect() })
                     .collect();
                 assert_eq!(placed.iter().map(|x| x.0).collect::<Vec<_>>(), expect, "start={start} n={n}");
                 assert_eq!(g.phase, Phase::Roll);
-                assert_eq!(g.current, 0, "the first placer takes the first turn");
-                for p in 0..n {
+                assert_eq!(g.current, P0, "the first placer takes the first turn");
+                for p in PlayerId::range(n) {
                     let s = g.buildings.iter().flatten().filter(|b| b.owner == p).count() as u8;
                     let r = g.roads.iter().filter(|r| **r == Some(p)).count() as u8;
                     assert_eq!((s, r), (start, start), "one road per starting settlement");
@@ -3240,15 +3263,15 @@ mod tests {
                     assert_eq!(g.players[p].roads_left, 15 - start);
                 }
                 // only each player's LAST settlement pays out
-                for p in 0..n {
+                for p in PlayerId::range(n) {
                     let last = placed.iter().filter(|x| x.0 == p).last().unwrap().1;
-                    let mut want = [0u8; 5];
+                    let mut want = Res::ZERO;
                     for &h in &g.board.vertices[last].hexes {
                         if let Some(r) = g.board.hexes[h].terrain.resource() {
                             want[r] += 1;
                         }
                     }
-                    assert_eq!(g.players[p].hand, want, "start={start} n={n} player {p}");
+                    assert_eq!(g.players[p].hand, want, "start={start} n={n} player {}", p.index());
                 }
                 invariants(&g);
             }
@@ -3259,37 +3282,37 @@ mod tests {
     fn friendly_robber_protects_low_scoring_players() {
         let mut g = Game::with_settings(names(3), with(|s| s.friendly_robber = true));
         g.phase = Phase::MoveRobber;
-        g.current = 0;
+        g.current = P0;
         let (_, v) = some_hex_vertex(&g);
-        g.buildings[v] = Some(Building { owner: 1, city: false });
+        g.buildings[v] = Some(Building { owner: P1, city: false });
         let touching: Vec<usize> = g.board.vertices[v].hexes.clone();
-        let allowed = g.robber_hexes(0);
+        let allowed = g.robber_hexes(P0);
         for &h in &touching {
             assert!(!allowed.contains(&h), "hex {h} touches a 1-point player");
         }
         assert!(allowed.len() >= 15 && !allowed.contains(&g.robber));
-        assert_eq!(g.legal(0).hexes, allowed, "the client is shown only legal hexes");
+        assert_eq!(g.legal(P0).hexes, allowed, "the client is shown only legal hexes");
         let blocked = touching.iter().copied().find(|&h| h != g.robber).unwrap();
-        let err = g.apply(0, Action::MoveRobber { hex: blocked }).unwrap_err();
+        let err = g.apply(P0, Action::MoveRobber { hex: blocked }).unwrap_err();
         assert!(err.contains("Friendly Robber"), "{err}");
         assert_eq!(g.phase, Phase::MoveRobber, "a refused move changes nothing");
 
         // your own buildings never protect a hex from you
         let mut mine = Game::with_settings(names(2), with(|s| s.friendly_robber = true));
-        mine.buildings[v] = Some(Building { owner: 0, city: false });
-        assert!(touching.iter().all(|&h| h == mine.robber || mine.robber_hexes(0).contains(&h)));
+        mine.buildings[v] = Some(Building { owner: P0, city: false });
+        assert!(touching.iter().all(|&h| h == mine.robber || mine.robber_hexes(P0).contains(&h)));
 
         // at 3 visible points a player is fair game
-        g.longest_road_holder = Some(1); // +2
-        assert_eq!(g.vp_public(1), 3);
-        assert!(g.robber_hexes(0).contains(&blocked));
-        g.apply(0, Action::MoveRobber { hex: blocked }).unwrap();
+        g.longest_road_holder = Some(P1); // +2
+        assert_eq!(g.vp_public(P1), 3);
+        assert!(g.robber_hexes(P0).contains(&blocked));
+        g.apply(P0, Action::MoveRobber { hex: blocked }).unwrap();
         assert_eq!(g.robber, blocked);
 
         // switched off: everything but the current hex is allowed
         let mut off = Game::with_settings(names(3), Settings::default());
-        off.buildings[v] = Some(Building { owner: 1, city: false });
-        assert_eq!(off.robber_hexes(0).len(), 18);
+        off.buildings[v] = Some(Building { owner: P1, city: false });
+        assert_eq!(off.robber_hexes(P0).len(), 18);
     }
 
     #[test]
@@ -3298,13 +3321,13 @@ mod tests {
         g.phase = Phase::MoveRobber;
         // player 1 (1 point each building, but low) sits on every vertex
         for v in 0..g.buildings.len() {
-            g.buildings[v] = Some(Building { owner: 1, city: false });
+            g.buildings[v] = Some(Building { owner: P1, city: false });
         }
         g.longest_road_holder = None;
-        assert!(g.vp_public(1) > FRIENDLY_ROBBER_MAX_VP);
+        assert!(g.vp_public(P1) > FRIENDLY_ROBBER_MAX_VP);
         g.settings.settlement_points = 0; // now player 1 has 0 points and protects every hex
-        assert_eq!(g.vp_public(1), 0);
-        assert_eq!(g.robber_hexes(0).len(), 18, "if every hex is protected, any hex is allowed");
+        assert_eq!(g.vp_public(P1), 0);
+        assert_eq!(g.robber_hexes(P0).len(), 18, "if every hex is protected, any hex is allowed");
     }
 
     #[test]
@@ -3313,9 +3336,9 @@ mod tests {
             let t0 = Instant::now();
             let mut g = Game::with_settings(names(2), with(|s| s.friendly_robber = true));
             let (_, v) = some_hex_vertex(&g);
-            g.buildings[v] = Some(Building { owner: 1, city: false });
+            g.buildings[v] = Some(Building { owner: P1, city: false });
             g.phase = Phase::MoveRobber;
-            g.current = 0;
+            g.current = P0;
             g.sync_clock(t0);
             assert!(g.tick(t0 + secs(100)));
             let touching = g.board.vertices[v].hexes.clone();
@@ -3336,7 +3359,7 @@ mod tests {
             .expect("a custom-rules event");
         assert!(line.contains("points to win 12") && line.contains("Friendly Robber on") && line.contains("bank trade 3:1"), "{line}");
         assert!(Game::new(names(2)).log.iter().all(|l| !matches!(l, LogEvent::CustomRules { .. })));
-        let v = g.view(0, &[true, true]);
+        let v = g.view(P0, &all_connected(2), &g.longest_roads());
         assert_eq!(v.settings.points_to_win, 12);
         let json = serde_json::to_string(&v).unwrap();
         assert!(json.contains("\"settings\":{\"points_to_win\":12"));
@@ -3351,7 +3374,7 @@ mod tests {
         let g = Game::new(names(2));
         assert_eq!(g.log.first(), Some(&LogEvent::GameStarted));
         assert!(g.log.contains(&LogEvent::TurnOrder { order: g.order.clone() }));
-        let json = serde_json::to_value(g.view(0, &[true, true])).unwrap();
+        let json = serde_json::to_value(g.view(P0, &all_connected(2), &g.longest_roads())).unwrap();
         assert_eq!(json["log"][0], serde_json::json!({ "type": "game_started" }));
     }
 
@@ -3375,12 +3398,12 @@ mod tests {
             .expect("a producing hex");
         let roll = g.board.hexes[h].number.unwrap();
         let v = g.board.hexes[h].vertices[0];
-        g.buildings[v] = Some(Building { owner: 0, city: false });
+        g.buildings[v] = Some(Building { owner: P0, city: false });
         g.distribute(roll);
-        let cards = g.players[0].hand;
-        assert!(sum(&cards) >= 1);
-        assert_eq!(g.log.last(), Some(&LogEvent::Collected { player: 0, cards }));
-        assert_eq!(sum(&g.players[1].hand), 0, "nothing is logged for players who got nothing");
+        let cards = g.players[P0].hand;
+        assert!(cards.total() >= 1);
+        assert_eq!(g.log.last(), Some(&LogEvent::Collected { player: P0, cards }));
+        assert_eq!(g.players[P1].hand.total(), 0, "nothing is logged for players who got nothing");
     }
 
     #[test]
@@ -3391,23 +3414,23 @@ mod tests {
         let p = g.current;
         g.phase = Phase::Main;
         g.rolled = true;
-        g.players[p].hand = [5, 1, 0, 0, 0];
+        g.players[p].hand = Res::new(5, 1, 0, 0, 0);
         let e = pick(&g.legal(p).roads, &mut rng).unwrap();
         g.apply(p, Action::BuildRoad { edge: e }).unwrap();
         assert_eq!(g.log.last(), Some(&LogEvent::BuiltRoad { player: p }));
         // A harbour from the random setup may improve on 4:1, so ask the game for the real ratio.
-        let ratio = g.ratio(p, BRICK);
-        g.apply(p, Action::BankTrade { give: BRICK, get: ORE }).unwrap();
-        assert_eq!(g.log.last(), Some(&LogEvent::BankTrade { player: p, give: BRICK, get: ORE, ratio }));
+        let ratio = g.ratio(p, Resource::Brick);
+        g.apply(p, Action::BankTrade { give: Resource::Brick, get: Resource::Ore }).unwrap();
+        assert_eq!(g.log.last(), Some(&LogEvent::BankTrade { player: p, give: Resource::Brick, get: Resource::Ore, ratio }));
     }
 
     #[test]
     fn a_timeout_is_logged_with_who_and_what_ran_out() {
         let t0 = Instant::now();
         let mut g = timed(3, TimerMode::VeryFast, t0);
-        into_main(&mut g, 1, t0);
+        into_main(&mut g, P1, t0);
         assert!(g.tick(t0 + secs(31)));
-        assert!(g.log.contains(&LogEvent::TimedOut { player: 1, kind: ClockKind::Turn }));
+        assert!(g.log.contains(&LogEvent::TimedOut { player: P1, kind: ClockKind::Turn }));
     }
 
     fn random_settings(rng: &mut impl Rng) -> Settings {

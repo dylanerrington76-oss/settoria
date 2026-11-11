@@ -46,11 +46,13 @@ assert(bad.errors.some((m) => /unknown color/i.test(m)), 'color outside the pale
 dup.ws.close(); bad.ws.close(); await sleep(100);
 assert(clients[0].last.players.length === 3, 'refused clients did not take a seat');
 
-// a 5th... a 4th joins then a 5th is refused
-const d = new Client('Dee'); await d.connect(); await sleep(60);
-const e = new Client('Eve'); await e.connect(); await sleep(60);
-assert(e.errors.some((m) => /full/i.test(m)), 'fifth player refused');
-d.ws.close(); e.ws.close(); await sleep(100);
+// the table seats 8: five more join (3 + 5), then a 9th is refused
+const extra = [];
+for (let i = 0; i < 5; i++) { const c = new Client('Extra' + i); await c.connect(); await sleep(60); extra.push(c); }
+assert(clients[0].last.players.length === 8, 'table fills to 8 players');
+const nine = new Client('Nine'); await nine.connect(); await sleep(60);
+assert(nine.errors.some((m) => /full/i.test(m)), 'ninth player refused');
+extra.forEach((c) => c.ws.close()); nine.ws.close(); await sleep(150);
 assert(clients[0].last.players.length === 3, 'lobby back to 3 after leaves');
 
 assert(clients[0].last.timer === 'normal', 'lobby defaults to the Normal timer');
@@ -121,7 +123,6 @@ assert(first.timer.kind === 'setup_settlement' && first.timer.total_ms === 12000
 assert([...first.order].sort().join() === '0,1,2' && first.current === first.order[0], 'order is a permutation and the first in it places first');
 assert(first.log.some((e) => e.type === 'turn_order' && e.order.join() === first.order.join()), 'turn order is logged');
 {
-  // the Earth map: 81 hexes on 7 islands, 27 harbours, a fixed Sahara, two more deserts away from it
   const b = first.board;
   assert(b.map === 'earth' && !('kind' in b) && b.hexes.length === 81 && b.ports.length === 27, 'the game is played on the Earth map');
   assert(b.style && b.style.sea_grid === true, 'Earth tells the browser to draw the sea grid: ' + JSON.stringify(b.style));
@@ -198,7 +199,7 @@ console.log('turns played:', turns, '| phase:', v.phase, '| log lines:', v.log.l
 assert(!JSON.stringify(clients[0].last).includes('"hand":') || Array.isArray(v.hand), 'own hand present');
 assert(v.players.every((p) => typeof p.cards === 'number'), 'others only expose card counts');
 
-// reconnect: drop Ben and rejoin with token
+// reconnect: drop player and rejoin with token
 const tok = clients[1].token; clients[1].ws.close(); await sleep(150);
 assert(clients[0].view.players[1].connected === false, 'disconnect visible to others');
 const ben2 = new Client('Ben'); ben2.token = tok; await ben2.connect(); await sleep(150);

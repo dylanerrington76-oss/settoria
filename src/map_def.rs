@@ -22,6 +22,7 @@
 //! ```
 
 use crate::board::Terrain;
+use crate::types::Resource;
 use crate::game::Settings;
 use serde::de::{self, Deserializer, IntoDeserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
@@ -120,15 +121,14 @@ pub enum PortKind {
 
 impl PortKind {
     /// `None` = 3:1 any resource, `Some(r)` = 2:1 for resource `r` (as in `Port::resource`).
-    pub fn resource(self) -> Option<usize> {
-        use crate::board::{BRICK, GRAIN, LUMBER, ORE, WOOL};
+    pub fn resource(self) -> Option<Resource> {
         match self {
             PortKind::Any => None,
-            PortKind::Brick => Some(BRICK),
-            PortKind::Lumber => Some(LUMBER),
-            PortKind::Ore => Some(ORE),
-            PortKind::Grain => Some(GRAIN),
-            PortKind::Wool => Some(WOOL),
+            PortKind::Brick => Some(Resource::Brick),
+            PortKind::Lumber => Some(Resource::Lumber),
+            PortKind::Ore => Some(Resource::Ore),
+            PortKind::Grain => Some(Resource::Grain),
+            PortKind::Wool => Some(Resource::Wool),
         }
     }
 }
@@ -215,8 +215,7 @@ impl Default for PortsDef {
 pub const MIN_PLAYERS: usize = 2;
 pub const MAX_PLAYERS: usize = 8;
 
-/// How many players the map is meant for. The engine itself supports 2 to 8.
-/// A map file that says nothing about it is for 2 to 4, as before.
+/// How many players the map is meant for
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct PlayerRange {
@@ -252,7 +251,7 @@ impl Default for Constraints {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct MapStyle {
-    /// Draw a faint hex grid across the open sea (Earth does). Off by default.
+    /// Draw a faint hex grid across the open sea. Off by default.
     pub sea_grid: bool,
 }
 

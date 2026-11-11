@@ -24,7 +24,7 @@ pub enum MapSource {
     Builtin,
     /// Read from the maps folder at startup.
     Folder,
-    /// Uploaded by the host while the server runs.
+    /// Uploaded by the host.
     Upload,
 }
 
@@ -46,12 +46,10 @@ pub struct MapEntry {
 pub struct MapInfo {
     pub id: String,
     pub name: String,
-    /// Empty if the map doesn't say.
     pub author: String,
     pub hexes: usize,
     pub players_min: usize,
     pub players_max: usize,
-    /// One of the maps compiled into the program (as opposed to one someone added).
     pub builtin: bool,
     /// The rules the map suggests. Offered to the host, never applied automatically.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -101,7 +99,7 @@ impl std::fmt::Display for RegistryError {
 pub const MAX_ID_LEN: usize = 64;
 
 /// The most maps the host can upload while the server runs. They are kept in memory, so this is what bounds it.
-pub const MAX_UPLOADS: usize = 10;
+pub const MAX_UPLOADS: usize = 5;
 
 fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= MAX_ID_LEN && id.chars().all(|c| c.is_ascii_alphanumeric() || "-_:.".contains(c))

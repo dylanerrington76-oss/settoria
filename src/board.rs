@@ -9,21 +9,12 @@
 //! numeric ids are used by the server rules and by the browser renderer.
 
 use crate::map_def::*;
+use crate::types::Resource;
 use crate::validate;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-/// Resource indices, used everywhere (hands, bank, costs, UI).
-pub const BRICK: usize = 0;
-pub const LUMBER: usize = 1;
-pub const ORE: usize = 2;
-pub const GRAIN: usize = 3;
-pub const WOOL: usize = 4;
-
-/// A bundle of resources, indexed [brick, lumber, ore, grain, wool].
-pub type Res = [u8; 5];
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -51,13 +42,13 @@ impl Terrain {
 }
 
 impl Terrain {
-    pub fn resource(self) -> Option<usize> {
+    pub fn resource(self) -> Option<Resource> {
         match self {
-            Terrain::Hills => Some(BRICK),
-            Terrain::Forest => Some(LUMBER),
-            Terrain::Mountains => Some(ORE),
-            Terrain::Fields => Some(GRAIN),
-            Terrain::Pasture => Some(WOOL),
+            Terrain::Hills => Some(Resource::Brick),
+            Terrain::Forest => Some(Resource::Lumber),
+            Terrain::Mountains => Some(Resource::Ore),
+            Terrain::Fields => Some(Resource::Grain),
+            Terrain::Pasture => Some(Resource::Wool),
             Terrain::Desert => None,
         }
     }
@@ -98,7 +89,7 @@ pub struct Port {
     pub a: usize,
     pub b: usize,
     /// `None` = 3:1 any resource, `Some(r)` = 2:1 for resource `r`.
-    pub resource: Option<usize>,
+    pub resource: Option<Resource>,
 }
 
 #[derive(Clone, Serialize)]
@@ -498,7 +489,7 @@ fn assign_port_kinds<R: Rng>(
     requested: &[Slot<PortKind>],
     pool: &std::collections::BTreeMap<PortKind, u32>,
     rng: &mut R,
-) -> Result<Vec<Option<usize>>, MapError> {
+) -> Result<Vec<Option<Resource>>, MapError> {
     let random_spots = requested.iter().filter(|s| s.is_random()).count();
     let total = pool_total(pool);
     if total != random_spots as u64 {
@@ -670,7 +661,7 @@ mod tests {
             assert_eq!(b.ports.len(), 9);
             assert_eq!(b.ports.iter().filter(|p| p.resource.is_none()).count(), 4);
             // every resource has exactly one 2:1 harbour
-            for r in 0..5 {
+            for r in Resource::ALL {
                 assert_eq!(b.ports.iter().filter(|p| p.resource == Some(r)).count(), 1);
             }
             // port vertices are distinct
@@ -765,7 +756,7 @@ mod tests {
         for _ in 0..100 {
             let b = Board::generate("earth", &mut rand::thread_rng());
             assert_eq!(b.ports.iter().filter(|p| p.resource.is_none()).count(), 12);
-            for r in 0..5 {
+            for r in Resource::ALL {
                 assert_eq!(b.ports.iter().filter(|p| p.resource == Some(r)).count(), 3);
             }
             // every harbour is on a coast edge, and no edge holds two
@@ -850,12 +841,12 @@ mod tests {
     fn usa_harbours() {
         let mut layouts = vec![];
         let mut kinds_vary = false;
-        let mut first_kinds: Option<Vec<Option<usize>>> = None;
+        let mut first_kinds: Option<Vec<Option<Resource>>> = None;
         for _ in 0..100 {
             let b = Board::generate("usa", &mut rand::thread_rng());
             assert_eq!(b.ports.len(), 25);
             assert_eq!(b.ports.iter().filter(|p| p.resource.is_none()).count(), 10);
-            for r in 0..5 {
+            for r in Resource::ALL {
                 assert_eq!(b.ports.iter().filter(|p| p.resource == Some(r)).count(), 3);
             }
             // every harbour is on a coast edge, and no edge holds two
@@ -881,7 +872,7 @@ mod tests {
             assert_eq!(used.len(), 25);
             // the spots never move between games, the kinds are dealt anew
             layouts.push(b.ports.iter().map(|p| (p.a, p.b)).collect::<Vec<_>>());
-            let kinds: Vec<Option<usize>> = b.ports.iter().map(|p| p.resource).collect();
+            let kinds: Vec<Option<Resource>> = b.ports.iter().map(|p| p.resource).collect();
             match &first_kinds {
                 None => first_kinds = Some(kinds),
                 Some(k) => kinds_vary |= *k != kinds,
@@ -1261,7 +1252,7 @@ mod tests {
             pool: BTreeMap::from([(PortKind::Any, 1)]),
         };
         let b = build(&d).unwrap();
-        assert_eq!(b.ports[0].resource, Some(ORE));
+        assert_eq!(b.ports[0].resource, Some(Resource::Ore));
         assert_eq!(b.ports[1].resource, None);
     }
 

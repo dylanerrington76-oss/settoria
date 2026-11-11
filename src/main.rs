@@ -6,6 +6,7 @@ mod map_def;
 mod map_files;
 mod map_loader;
 mod maps;
+mod types;
 mod validate;
 
 use axum::{
@@ -29,12 +30,16 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tower_http::services::{ServeDir, ServeFile};
+use types::{PerPlayer, PlayerId};
 
 type Tx = UnboundedSender<String>;
 type Shared = Arc<Mutex<Room>>;
 
 /// Seats at the table (the engine's limit; a map can allow fewer, see `PlayerRange`).
 const MAX_PLAYERS: usize = map_def::MAX_PLAYERS;
+
+/// The host is whoever sits in the first seat; every host-only message checks for it.
+const HOST: PlayerId = PlayerId::new(0);
 
 /// Messages for joining and managing the room (everything else is a game `Action`).
 #[derive(Deserialize)]
@@ -71,7 +76,7 @@ struct LobbyPlayer {
 enum ServerMsg<'a> {
     Welcome { token: &'a str },
     /// `map` is the id of the chosen map; `maps` is every map the host can choose from.
-    Lobby { you: usize, players: Vec<LobbyPlayer>, timer: TimerMode, settings: Settings, map: &'a str, maps: &'a [maps::MapInfo] },
+    Lobby { you: PlayerId, players: Vec<LobbyPlayer>, timer: TimerMode, settings: Settings, map: &'a str, maps: &'a [maps::MapInfo] },
     Game { view: game::GameView<'a> },
     /// `code` lets the client react to specific failures (e.g. `color_taken`).
     Error {
@@ -90,7 +95,7 @@ struct Seat {
 
 /// The single in-memory table. Nothing here is ever written to disk.
 struct Room {
-    seats: Vec<Seat>,
+    seats: PerPlayer<Seat>,
     game: Option<Game>,
     /// Chosen by the host in the lobby; used when the game starts.
     timer: TimerMode,
@@ -106,7 +111,7 @@ struct Room {
 impl Default for Room {
     fn default() -> Room {
         Room {
-            seats: Vec::new(),
+            seats: PerPlayer::new(),
             game: None,
             timer: TimerMode::default(),
             settings: Settings::default(),
@@ -131,18 +136,20 @@ impl Room {
         self.seats.iter().any(|s| s.color == color)
     }
 
-    fn seat_of(&self, token: &str) -> Option<usize> {
-        self.seats.iter().position(|s| s.token == token)
+    fn seat_of(&self, token: &str) -> Option<PlayerId> {
+        self.seats.position(|s| s.token == token)
     }
 
     fn broadcast(&self) {
-        let connected: Vec<bool> = self.seats.iter().map(|s| s.tx.is_some()).collect();
+        let connected: PerPlayer<bool> = self.seats.iter().map(|s| s.tx.is_some()).collect();
+        // Longest road is the same in every seat's view and costly to compute, so do it once here.
+        let game = self.game.as_ref().map(|g| (g, g.longest_roads()));
         // Only a lobby lists the maps (a game just carries its board), so only then ask the registry.
         let maps = if self.game.is_none() { maps::infos(&self.maps) } else { Vec::new() };
-        for (i, seat) in self.seats.iter().enumerate() {
+        for (i, seat) in self.seats.entries() {
             let Some(tx) = &seat.tx else { continue };
-            match &self.game {
-                Some(g) => send(tx, &ServerMsg::Game { view: g.view(i, &connected) }),
+            match &game {
+                Some((g, road_lens)) => send(tx, &ServerMsg::Game { view: g.view(i, &connected, road_lens) }),
                 None => send(
                     tx,
                     &ServerMsg::Lobby {
@@ -228,7 +235,7 @@ impl Room {
                 let Some(me) = token.as_deref().and_then(|t| self.seat_of(t)) else {
                     return error(tx, "Join the table first");
                 };
-                if me != 0 {
+                if me != HOST {
                     return error(tx, "Only the host can start the game");
                 }
                 if self.game.is_some() {
@@ -260,7 +267,7 @@ impl Room {
                 let Some(me) = token.as_deref().and_then(|t| self.seat_of(t)) else {
                     return error(tx, "Join the table first");
                 };
-                if me != 0 {
+                if me != HOST {
                     return error(tx, "Only the host can change the timer");
                 }
                 if self.game.is_some() {
@@ -273,7 +280,7 @@ impl Room {
                 let Some(me) = token.as_deref().and_then(|t| self.seat_of(t)) else {
                     return error(tx, "Join the table first");
                 };
-                if me != 0 {
+                if me != HOST {
                     return error(tx, "Only the host can change the map");
                 }
                 if self.game.is_some() {
@@ -291,7 +298,7 @@ impl Room {
                 let Some(me) = token.as_deref().and_then(|t| self.seat_of(t)) else {
                     return error(tx, "Join the table first");
                 };
-                if me != 0 {
+                if me != HOST {
                     return error(tx, "Only the host can change the game settings");
                 }
                 if self.game.is_some() {
@@ -410,7 +417,7 @@ async fn upload_map(State(room): State<Shared>, headers: HeaderMap, body: Result
         let room = room.lock().unwrap();
         match bearer_token(&headers).and_then(|token| room.seat_of(token)) {
             None => return refuse(StatusCode::UNAUTHORIZED, vec!["Send the host's seat token as `Authorization: Bearer <token>`".to_string()]),
-            Some(0) => {}
+            Some(HOST) => {}
             Some(_) => return refuse(StatusCode::FORBIDDEN, vec!["Only the host can upload a map".to_string()]),
         }
         room.maps.clone()
@@ -509,7 +516,6 @@ fn router(room: Shared, static_dir: &str) -> Router {
 
 #[tokio::main]
 async fn main() {
-    // `catan-lan validate map.json ...` checks map files and exits; it never starts the server.
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("validate") {
         std::process::exit(validate::run_cli(&args[1..], &mut std::io::stdout(), &mut std::io::stderr()));
@@ -540,7 +546,7 @@ async fn main() {
         .await
         .unwrap_or_else(|e| panic!("could not listen on port {port}: {e}"));
 
-    println!("Catan LAN server running");
+    println!("Settoria LAN server running");
     println!("  Maps:           {}", maps::ids(&maps).join(", "));
     println!("  Maps folder:    {maps_dir}: {folder_summary}");
     println!("  This computer:  http://localhost:{port}");
