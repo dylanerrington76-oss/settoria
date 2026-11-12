@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Glyph, PieceShape, isVeryDark, pieceEdge, shade } from './art';
-import { GameView, Terrain } from './types';
+import { GameView, Terrain, Vertex } from './types';
 
 const S = 64; // pixels per hex radius (board units are multiples of this)
 
@@ -452,6 +452,22 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
   );
 });
 
+/** The cross planks that mark a road as a bridge: short lines across it, evenly spaced from end to end. */
+function BridgePlanks({ a, b, stroke }: { a: Vertex; b: Vertex; stroke: string }) {
+  const [ax, ay, bx, by] = [a.x * S, a.y * S, b.x * S, b.y * S];
+  const len = Math.hypot(bx - ax, by - ay) || 1;
+  const [nx, ny] = [-(by - ay) / len, (bx - ax) / len];
+  const half = ROAD_W / 2 - ROAD_LINE;
+  return (
+    <g stroke={stroke} strokeWidth={1.3} strokeLinecap="round" opacity={0.75}>
+      {[0.2, 0.35, 0.5, 0.65, 0.8].map((t) => {
+        const [px, py] = [ax + (bx - ax) * t, ay + (by - ay) * t];
+        return <line key={t} x1={px - nx * half} y1={py - ny * half} x2={px + nx * half} y2={py + ny * half} />;
+      })}
+    </g>
+  );
+}
+
 /**
  * The board: a memoized static layer plus the pieces that change with the game (roads, buildings,
  * robber, click targets), which are cheap to redraw on every message.
@@ -490,6 +506,7 @@ export default function Board({ view, vertexTargets, edgeTargets, hexTargets, sh
               strokeLinejoin="miter"
               strokeMiterlimit={4}
             />
+            {board.edges[r.edge].bridge && <BridgePlanks a={board.vertices[board.edges[r.edge].a]} b={board.vertices[board.edges[r.edge].b]} stroke={outline} />}
           </g>
         );
       })}

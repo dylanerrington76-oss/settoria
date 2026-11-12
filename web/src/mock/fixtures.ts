@@ -141,7 +141,7 @@ function base(): GameView {
     hand: [0, 0, 0, 0, 0], dev: [0, 0, 0, 0, 0], dev_new: [0, 0, 0, 0, 0], vp_you: 0,
     bank: [19, 19, 19, 19, 19], deck_left: 25, dev_played: false, ratios: [4, 4, 4, 4, 4],
     setup_needs: 'settlement', discards: [], steal_candidates: [], road_building_left: 0, trades: [],
-    legal: { settlements: [], cities: [], roads: [], hexes: [] },
+    legal: { settlements: [], cities: [], roads: [], bridges: [], hexes: [] },
     longest_road_holder: null, largest_army_holder: null, winner: null, log: [],
     order: [0, 1, 2, 3], timer_mode: 'normal', settings: DEFAULT_SETTINGS,
     timer: { kind: 'setup_settlement', player: 0, remaining_ms: 94_000, total_ms: 120_000 },

@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+### [v2026.11.12]
+Added Bridges
+
 ### [v2026.11.11]
 Broadcast now computes longest-road lengths once per broadcast. Resource and DevCard are now enums.
 

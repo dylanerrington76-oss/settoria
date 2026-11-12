@@ -13,6 +13,8 @@ pub const COST_ROAD: Res = Res::new(1, 1, 0, 0, 0);
 pub const COST_SETTLEMENT: Res = Res::new(1, 1, 0, 1, 1);
 pub const COST_CITY: Res = Res::new(0, 0, 3, 2, 0);
 pub const COST_DEV: Res = Res::new(0, 0, 1, 1, 1);
+/// A bridge: 1 brick, 1 lumber and 1 ore.
+pub const COST_BRIDGE: Res = Res::new(1, 1, 1, 0, 0);
 
 // Game settings
 
@@ -35,6 +37,10 @@ pub struct Settings {
     pub discard_limit: u8,
     /// Robber can't go on a hex touching a player with `FRIENDLY_ROBBER_MAX_VP` or fewer points.
     pub friendly_robber: bool,
+    /// Players may build bridges: a road over a narrow stretch of water between two land corners
+    /// (`Edge::bridge`). A bridge costs `COST_BRIDGE`, uses one of the player's road pieces and counts
+    /// as one road for Longest Road.
+    pub bridges: bool,
     pub max_roads: u8,
     pub max_cities: u8,
     pub max_settlements: u8,
@@ -64,6 +70,7 @@ impl Default for Settings {
             points_to_win: 15,
             discard_limit: 7,
             friendly_robber: false,
+            bridges: false,
             max_roads: 15,
             max_cities: 4,
             max_settlements: 5,
@@ -178,6 +185,9 @@ impl Settings {
         }
         if self.friendly_robber {
             v.push("Friendly Robber on".to_string());
+        }
+        if self.bridges {
+            v.push("Bridges on".to_string());
         }
         v
     }
@@ -355,6 +365,8 @@ pub struct Player {
 pub enum Action {
     Roll,
     BuildRoad { edge: usize },
+    /// A road over water (see `Settings::bridges`): the edge must be a bridge site.
+    BuildBridge { edge: usize },
     BuildSettlement { vertex: usize },
     BuildCity { vertex: usize },
     BuyDev,
@@ -424,6 +436,8 @@ pub struct Legal {
     pub settlements: Vec<usize>,
     pub cities: Vec<usize>,
     pub roads: Vec<usize>,
+    /// Where a bridge could go (empty unless the game has bridges on).
+    pub bridges: Vec<usize>,
     pub hexes: Vec<usize>,
 }
 
@@ -756,12 +770,24 @@ impl Game {
         false
     }
 
+    /// Where `p` could build a road: bridge sites are not roads (see `legal_bridges`).
     pub fn legal_roads(&self, p: PlayerId) -> Vec<usize> {
         if self.players[p].roads_left == 0 {
             return vec![];
         }
         (0..self.roads.len())
-            .filter(|&e| self.road_connected(p, e))
+            .filter(|&e| !self.board.edges[e].bridge && self.road_connected(p, e))
+            .collect()
+    }
+
+    /// Where `p` could build a bridge: a bridge site that touches their roads or buildings, the way a road
+    /// must. Empty when the game has bridges off or `p` has no road pieces left.
+    pub fn legal_bridges(&self, p: PlayerId) -> Vec<usize> {
+        if !self.settings.bridges || self.players[p].roads_left == 0 {
+            return vec![];
+        }
+        (0..self.roads.len())
+            .filter(|&e| self.board.edges[e].bridge && self.road_connected(p, e))
             .collect()
     }
 
@@ -777,7 +803,7 @@ impl Game {
                         .edges
                         .iter()
                         .copied()
-                        .filter(|&e| self.roads[e].is_none())
+                        .filter(|&e| self.roads[e].is_none() && !self.board.edges[e].bridge)
                         .collect();
                 } else {
                     l.settlements = (0..self.buildings.len())
@@ -788,6 +814,7 @@ impl Game {
             Phase::Main => {
                 let pl = &self.players[p];
                 l.roads = self.legal_roads(p);
+                l.bridges = self.legal_bridges(p);
                 if pl.settlements_left > 0 {
                     l.settlements = (0..self.buildings.len())
                         .filter(|&v| self.settlement_connected(p, v))
@@ -1040,6 +1067,7 @@ impl Game {
         match act {
             Action::Roll => self.do_roll(),
             Action::BuildRoad { edge } => self.do_build_road(p, edge),
+            Action::BuildBridge { edge } => self.do_build_bridge(p, edge),
             Action::BuildSettlement { vertex } => self.do_build_settlement(p, vertex),
             Action::BuildCity { vertex } => self.do_build_city(p, vertex),
             Action::BuyDev => self.do_buy_dev(p),
@@ -1261,7 +1289,7 @@ impl Game {
             Phase::Setup => {
                 let v = self.setup_vertex.ok_or("Place a settlement first")?;
                 let e = &self.board.edges[edge];
-                if self.roads[edge].is_some() || (e.a != v && e.b != v) {
+                if self.roads[edge].is_some() || e.bridge || (e.a != v && e.b != v) {
                     return Err("The road must touch your new settlement".into());
                 }
                 self.roads[edge] = Some(p);
@@ -1271,7 +1299,7 @@ impl Game {
                 Ok(())
             }
             Phase::RoadBuilding => {
-                if self.players[p].roads_left == 0 || !self.road_connected(p, edge) {
+                if self.players[p].roads_left == 0 || self.board.edges[edge].bridge || !self.road_connected(p, edge) {
                     return Err("You can't build a road there".into());
                 }
                 self.roads[edge] = Some(p);
@@ -1292,6 +1320,9 @@ impl Game {
                 if !self.players[p].hand.covers(&COST_ROAD) {
                     return Err("A road costs 1 brick and 1 lumber".into());
                 }
+                if self.board.edges[edge].bridge {
+                    return Err("That is water: a bridge goes there, not a road".into());
+                }
                 if !self.road_connected(p, edge) {
                     return Err("You can't build a road there".into());
                 }
@@ -1305,6 +1336,40 @@ impl Game {
             }
             _ => Err("You can't build a road right now".into()),
         }
+    }
+
+    /// Build a bridge: a road over water, paid for with `COST_BRIDGE`. Main phase only (so not in setup and
+    /// not with a Road Building card). It takes one of the player's road pieces, joins their road network
+    /// like any road and counts as one road for Longest Road.
+    fn do_build_bridge(&mut self, p: PlayerId, edge: usize) -> Result<(), String> {
+        if edge >= self.roads.len() {
+            return Err("Unknown bridge location".into());
+        }
+        if self.phase != Phase::Main {
+            return Err("You can't build a bridge right now".into());
+        }
+        if !self.settings.bridges {
+            return Err("Bridges are off in this game".into());
+        }
+        if self.players[p].roads_left == 0 {
+            return Err("You have no roads left".into());
+        }
+        if !self.board.edges[edge].bridge {
+            return Err("A bridge can only be built over water".into());
+        }
+        if !self.players[p].hand.covers(&COST_BRIDGE) {
+            return Err("A bridge costs 1 brick, 1 lumber and 1 ore".into());
+        }
+        if !self.road_connected(p, edge) {
+            return Err("You can't build a bridge there".into());
+        }
+        self.pay(p, &COST_BRIDGE);
+        self.roads[edge] = Some(p);
+        self.players[p].roads_left -= 1;
+        self.log(LogEvent::BuiltBridge { player: p });
+        self.bonus += Duration::from_secs(BONUS_SECS);
+        self.update_longest_road();
+        Ok(())
     }
 
     fn do_build_settlement(&mut self, p: PlayerId, v: usize) -> Result<(), String> {
@@ -2204,7 +2269,9 @@ mod tests {
                             }
                         }
                         6..=7 => {
-                            if let Some(e) = pick(&l.roads, rng) {
+                            if let Some(e) = pick(&l.bridges, rng).filter(|_| rng.gen_bool(0.5)) {
+                                let _ = g.apply(p, Action::BuildBridge { edge: e });
+                            } else if let Some(e) = pick(&l.roads, rng) {
                                 let _ = g.apply(p, Action::BuildRoad { edge: e });
                             }
                         }
@@ -3433,12 +3500,159 @@ mod tests {
         assert!(g.log.contains(&LogEvent::TimedOut { player: P1, kind: ClockKind::Turn }));
     }
 
+    // ------------------------------------------------------------------
+    // Bridges
+    // ------------------------------------------------------------------
+
+    /// An Earth game with bridges on, in the main phase of P0's turn, plus the ends of one bridge site
+    /// (`a`, the one P0 holds a settlement on, and `b`) and the site's edge id.
+    fn bridge_game(on: bool) -> (Game, usize, usize, usize) {
+        let colors = PALETTE.iter().take(2).map(|c| c.to_string()).collect();
+        let mut g = Game::build(names(2), colors, TimerMode::Normal, with(|s| s.bridges = on), "earth", false, Instant::now());
+        let e = g.board.edges.iter().position(|e| e.bridge).expect("Earth has bridge sites");
+        let (a, b) = (g.board.edges[e].a, g.board.edges[e].b);
+        g.buildings[a] = Some(Building { owner: P0, city: false });
+        g.players[P0].settlements_left -= 1;
+        into_main(&mut g, P0, Instant::now());
+        (g, a, b, e)
+    }
+
+    /// Hand `p` exactly `cards` from the bank.
+    fn deal(g: &mut Game, p: PlayerId, cards: Res) {
+        for r in Resource::ALL {
+            g.players[p].hand[r] = cards[r];
+            g.bank[r] -= cards[r];
+        }
+    }
+
+    #[test]
+    fn a_bridge_costs_brick_lumber_and_ore_and_joins_the_road_network() {
+        let (mut g, _, b, e) = bridge_game(true);
+        assert_eq!(COST_BRIDGE, Res::new(1, 1, 1, 0, 0));
+        deal(&mut g, P0, COST_BRIDGE);
+        let l = g.legal(P0);
+        assert!(l.bridges.contains(&e), "a bridge can start at a settlement");
+        assert!(!l.roads.contains(&e), "and the site is not offered as a road");
+        assert!(g.apply(P0, Action::BuildRoad { edge: e }).is_err(), "a road can't be built over water");
+        assert_eq!(g.players[P0].hand, COST_BRIDGE);
+
+        let bank = g.bank;
+        g.apply(P0, Action::BuildBridge { edge: e }).unwrap();
+        assert_eq!(g.roads[e], Some(P0));
+        assert_eq!(g.players[P0].hand, Res::ZERO);
+        assert_eq!(g.players[P0].roads_left, g.settings.max_roads - 1, "a bridge is one of the road pieces");
+        for r in Resource::ALL {
+            assert_eq!(g.bank[r], bank[r] + COST_BRIDGE[r]);
+        }
+        assert_eq!(g.log.last(), Some(&LogEvent::BuiltBridge { player: P0 }));
+        assert_eq!(g.longest_road(P0), 1, "and one segment of the longest road");
+        assert!(g.legal(P0).settlements.contains(&b), "the far shore is now connected to P0's network");
+        assert!(g.legal(P0).bridges.is_empty() || !g.legal(P0).bridges.contains(&e), "built bridges are not offered again");
+        invariants(&g);
+    }
+
+    #[test]
+    fn a_bridge_needs_the_full_price_a_connection_and_a_free_road_piece() {
+        let (mut g, _, _, e) = bridge_game(true);
+        // one card short of each cost in turn
+        for short in [Res::new(0, 1, 1, 0, 0), Res::new(1, 0, 1, 0, 0), Res::new(1, 1, 0, 0, 0)] {
+            deal(&mut g, P0, short);
+            assert!(g.apply(P0, Action::BuildBridge { edge: e }).is_err());
+            assert_eq!(g.roads[e], None);
+            for r in Resource::ALL {
+                g.bank[r] += g.players[P0].hand[r];
+                g.players[P0].hand[r] = 0;
+            }
+        }
+        // a road piece is needed
+        deal(&mut g, P0, COST_BRIDGE);
+        g.players[P0].roads_left = 0;
+        assert!(g.legal(P0).bridges.is_empty());
+        assert!(g.apply(P0, Action::BuildBridge { edge: e }).is_err());
+        g.players[P0].roads_left = 1;
+        // ... and a connection: P1 owns nothing near the site
+        assert!(g.apply(P1, Action::BuildBridge { edge: e }).is_err(), "not P1's turn");
+        g.current = P1;
+        g.players[P1].hand = COST_BRIDGE;
+        g.players[P1].roads_left = 1;
+        assert!(g.apply(P1, Action::BuildBridge { edge: e }).is_err(), "P1 has no road or settlement there");
+        // only a bridge site can take a bridge
+        g.current = P0;
+        let land = g.board.edges.iter().position(|e| !e.bridge).unwrap();
+        assert!(g.apply(P0, Action::BuildBridge { edge: land }).is_err());
+        assert!(g.apply(P0, Action::BuildBridge { edge: g.roads.len() }).is_err());
+        g.apply(P0, Action::BuildBridge { edge: e }).unwrap();
+    }
+
+    #[test]
+    fn bridges_are_off_unless_the_host_turns_them_on() {
+        assert!(!Settings::default().bridges);
+        let (mut g, _, _, e) = bridge_game(false);
+        deal(&mut g, P0, COST_BRIDGE);
+        assert!(g.legal(P0).bridges.is_empty());
+        assert!(g.apply(P0, Action::BuildBridge { edge: e }).is_err());
+        assert_eq!(g.roads[e], None);
+        assert!(with(|s| s.bridges = true).changes().contains(&"Bridges on".to_string()));
+        assert!(Settings::default().changes().is_empty());
+    }
+
+    #[test]
+    fn bridges_are_for_the_main_phase_not_for_setup_or_road_building() {
+        let colors = PALETTE.iter().take(2).map(|c| c.to_string()).collect();
+        let mut g = Game::build(names(2), colors, TimerMode::Normal, with(|s| s.bridges = true), "earth", false, Instant::now());
+        let e = g.board.edges.iter().position(|e| e.bridge).unwrap();
+        let a = g.board.edges[e].a;
+        // setup: the road next to a settlement on a bridge site's corner is a land road
+        g.apply(P0, Action::BuildSettlement { vertex: a }).unwrap();
+        let l = g.legal(P0);
+        assert!(!l.roads.is_empty() && l.roads.iter().all(|&r| !g.board.edges[r].bridge));
+        assert!(l.bridges.is_empty());
+        assert!(g.apply(P0, Action::BuildRoad { edge: e }).is_err());
+        assert!(g.apply(P0, Action::BuildBridge { edge: e }).is_err());
+
+        // Road Building card: free roads only, never a bridge
+        let (mut g, _, _, e) = bridge_game(true);
+        g.phase = Phase::RoadBuilding;
+        g.road_building_left = 2;
+        assert!(g.legal(P0).roads.iter().all(|&r| !g.board.edges[r].bridge));
+        assert!(g.apply(P0, Action::BuildRoad { edge: e }).is_err());
+        assert!(g.apply(P0, Action::BuildBridge { edge: e }).is_err());
+        assert_eq!(g.roads[e], None);
+    }
+
+    #[test]
+    fn a_bridge_extends_longest_road() {
+        let (mut g, _, b, e) = bridge_game(true);
+        deal(&mut g, P0, COST_BRIDGE);
+        // a land road leaving the far corner, then the bridge to it: 2 long
+        let far = g.board.vertices[b].edges.iter().copied().find(|&x| !g.board.edges[x].bridge).unwrap();
+        g.roads[far] = Some(P0);
+        g.players[P0].roads_left -= 1;
+        assert_eq!(g.longest_road(P0), 1);
+        g.apply(P0, Action::BuildBridge { edge: e }).unwrap();
+        assert_eq!(g.longest_road(P0), 2);
+    }
+
+    #[test]
+    fn bridges_have_a_wire_format() {
+        let a: Action = serde_json::from_str(r#"{"type":"build_bridge","edge":3}"#).unwrap();
+        assert!(matches!(a, Action::BuildBridge { edge: 3 }));
+        let s: Settings = serde_json::from_str(r#"{"bridges":true}"#).unwrap();
+        assert!(s.bridges && s.points_to_win == 15);
+        let (g, _, _, e) = bridge_game(true);
+        let v = serde_json::to_value(&g.board).unwrap();
+        assert_eq!(v["edges"][e]["bridge"], true);
+        let land = g.board.edges.iter().position(|e| !e.bridge).unwrap();
+        assert!(v["edges"][land].get("bridge").is_none(), "land edges are sent as before");
+    }
+
     fn random_settings(rng: &mut impl Rng) -> Settings {
         let start = rng.gen_range(1..=3u8);
         let s = Settings {
             points_to_win: rng.gen_range(5..=15),
             discard_limit: rng.gen_range(2..=10),
             friendly_robber: rng.gen_bool(0.5),
+            bridges: rng.gen_bool(0.5),
             max_roads: rng.gen_range(start.max(3)..=20),
             max_cities: rng.gen_range(0..=6),
             max_settlements: rng.gen_range(start..=8),

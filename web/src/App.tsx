@@ -25,6 +25,7 @@ import { useRoute } from './route';
 import { useGame } from './useGame';
 import {
   colorName,
+  COST_BRIDGE,
   COST_CITY,
   COST_DEV,
   COST_ROAD,
@@ -49,7 +50,7 @@ import {
 } from './types';
 
 type Send = (msg: object) => void;
-type BuildMode = 'road' | 'settlement' | 'city' | null;
+type BuildMode = 'road' | 'bridge' | 'settlement' | 'city' | null;
 type Dialog = null | 'trade' | 'plenty' | 'monopoly' | 'rules' | 'info' | 'settings';
 
 export default function App() {
@@ -521,7 +522,7 @@ function ActBtn({
   on,
   onClick,
 }: {
-  kind: 'trade' | 'dev' | 'road' | 'settlement' | 'city' | 'turn';
+  kind: 'trade' | 'dev' | 'road' | 'bridge' | 'settlement' | 'city' | 'turn';
   badge?: number;
   label: string;
   title: string;
@@ -562,7 +563,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
   const placing = v.phase === 'setup' || v.phase === 'road_building';
   const vertexTargets =
     mine && (v.phase === 'setup' || (main && mode === 'settlement')) ? v.legal.settlements : main && mode === 'city' ? v.legal.cities : [];
-  const edgeTargets = mine && (placing || (main && mode === 'road')) ? v.legal.roads : [];
+  const edgeTargets = !mine ? [] : placing || (main && mode === 'road') ? v.legal.roads : main && mode === 'bridge' ? v.legal.bridges : [];
   const hexTargets = mine && v.phase === 'move_robber' ? v.legal.hexes : [];
 
   const canDev = mine && (v.phase === 'roll' || v.phase === 'main') && !v.dev_played;
@@ -616,7 +617,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
               setMode(null);
             }}
             onEdge={(i) => {
-              act({ type: 'build_road', edge: i });
+              act({ type: main && mode === 'bridge' ? 'build_bridge' : 'build_road', edge: i });
               if (v.phase === 'main') setMode(null);
             }}
             onHex={(i) => act({ type: 'move_robber', hex: i })}
@@ -652,7 +653,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
           )}
         </main>
 
-        <div className="bottom">
+        <div className={'bottom' + (v.settings.bridges ? ' with-bridge' : '')}>
           <div className="status">
             {canRoll ? (
               <button className="pill" onClick={() => act({ type: 'roll' })} aria-live="polite">
@@ -694,7 +695,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
             </div>
           </div>
 
-          <div className="actions">
+          <div className={'actions' + (v.settings.bridges ? ' with-bridge' : '')}>
             <ActBtn kind="trade" label="Trade" title="Trade with players or the bank" disabled={!main} onClick={() => setDialog('trade')} />
             <ActBtn
               kind="dev"
@@ -712,6 +713,17 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
               disabled={!afford(COST_ROAD) || v.legal.roads.length === 0}
               onClick={() => pickMode('road')}
             />
+            {v.settings.bridges && (
+              <ActBtn
+                kind="bridge"
+                label="Build bridge"
+                title={costText('Bridge', COST_BRIDGE) + ' (a road over water; uses a road piece)'}
+                badge={me.roads_left}
+                on={mode === 'bridge'}
+                disabled={!afford(COST_BRIDGE) || v.legal.bridges.length === 0}
+                onClick={() => pickMode('bridge')}
+              />
+            )}
             <ActBtn
               kind="settlement"
               label="Build settlement"
@@ -819,7 +831,7 @@ function RollChart({ counts }: { counts: number[] }) {
   return (
     <section className="rolls" aria-label="Dice rolls">
       <div className="rolls-total">
-        <b>{total}</b> {total === 1 ? 'dice roll' : 'dice rolls'} in total
+        <b>{total}</b> {total === 1 ? 'dice roll' : 'dice rolls'}
       </div>
       {total > 0 ? (
         <>
@@ -834,7 +846,6 @@ function RollChart({ counts }: { counts: number[] }) {
               </div>
             ))}
           </div>
-          <p className="rolls-axis">Dice total</p>
         </>
       ) : (
         <p className="muted">No dice were rolled.</p>
@@ -885,7 +896,6 @@ function GameOver({ v, send }: { v: GameView; send: Send }) {
         </table>
       </div>
       <RollChart counts={v.roll_counts} />
-      <p className="muted">Nothing is saved. Start again for a fresh board.</p>
       <div className="modal-actions">
         <button className="primary" onClick={() => send({ type: 'reset' })}>
           Back to lobby

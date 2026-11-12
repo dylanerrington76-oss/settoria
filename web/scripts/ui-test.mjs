@@ -218,6 +218,11 @@ test('rules are described in the order the rules panel lists them', () => {
   assert.match(said[1], /Friendly robber/i);
 });
 
+test('bridges are a toggle that is off in the standard rules', () => {
+  assert.equal(DEFAULT_SETTINGS.bridges, false);
+  assert.match(settingsDifferences(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, bridges: true })[0], /Bridges on$/);
+});
+
 test('a toggle says on or off, and a number says its value', () => {
   assert.match(settingsDifferences(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, friendly_robber: true })[0], /on$/);
   assert.match(settingsDifferences({ ...DEFAULT_SETTINGS, friendly_robber: true }, DEFAULT_SETTINGS)[0], /off$/);

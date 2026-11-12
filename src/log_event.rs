@@ -38,6 +38,8 @@ pub enum LogEvent {
     PlacedSettlement { player: PlayerId },
     BuiltSettlement { player: PlayerId },
     BuiltRoad { player: PlayerId },
+    /// A road over water (see `Settings::bridges`).
+    BuiltBridge { player: PlayerId },
     BuiltCity { player: PlayerId },
     BoughtDevCard { player: PlayerId },
     PlayedKnight { player: PlayerId },

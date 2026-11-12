@@ -82,6 +82,10 @@ pub struct Vertex {
 pub struct Edge {
     pub a: usize,
     pub b: usize,
+    /// A bridge site: a sea edge joining two land corners. Only a bridge can be built here (and only when the
+    /// game's `bridges` rule is on). Land and coast edges have `false`, which the browser is not sent.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub bridge: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -421,7 +425,7 @@ impl Geometry {
                 let (a, b) = (corner_ids[i], corner_ids[(i + 1) % 6]);
                 let k = (a.min(b), a.max(b));
                 let eid = *edge_ids.entry(k).or_insert_with(|| {
-                    edges.push(Edge { a: k.0, b: k.1 });
+                    edges.push(Edge { a: k.0, b: k.1, bridge: false });
                     edge_hex_count.push(0);
                     edges.len() - 1
                 });
@@ -534,6 +538,37 @@ fn place_ports<R: Rng>(def: &MapDef, geo: &Geometry, rng: &mut R) -> Result<Vec<
 }
 
 // ----------------------------------------------------------------------
+// Bridge sites
+// ----------------------------------------------------------------------
+
+/// Appends the bridge sites to `edges`: every pair of land corners one hex side apart that no land or coast
+/// edge joins, so the stretch between them is open water (a narrow channel or an inlet). Each is an `Edge`
+/// with `bridge` set, appended after the land edges, so the ids of those never change; it is also added to
+/// both corners' `edges` (so a road network runs over it) but not to their `neighbors`: the distance rule
+/// looks at land only.
+///
+/// This runs after the harbours are placed, which use the geometry without these edges.
+fn add_bridge_sites(vertices: &mut [Vertex], edges: &mut Vec<Edge>) {
+    let known: std::collections::HashSet<(usize, usize)> = edges.iter().map(|e| (e.a, e.b)).collect();
+    let mut sites = vec![];
+    for a in 0..vertices.len() {
+        for b in a + 1..vertices.len() {
+            let (dx, dy) = (vertices[a].x - vertices[b].x, vertices[a].y - vertices[b].y);
+            // Hex sides are 1 long; the next distance between corners of the lattice is sqrt(3).
+            if (dx.abs() < 1.2 && dy.abs() < 1.2) && ((dx * dx + dy * dy).sqrt() - 1.0).abs() < 0.01 && !known.contains(&(a, b)) {
+                sites.push((a, b));
+            }
+        }
+    }
+    for (a, b) in sites {
+        let id = edges.len();
+        edges.push(Edge { a, b, bridge: true });
+        vertices[a].edges.push(id);
+        vertices[b].edges.push(id);
+    }
+}
+
+// ----------------------------------------------------------------------
 // The board
 // ----------------------------------------------------------------------
 
@@ -580,15 +615,9 @@ impl Board {
                 vertices: geo.hex_vertices[i],
             })
             .collect();
-        Ok(Board {
-            map: map.to_string(),
-            style: def.style,
-            hexes,
-            vertices: geo.vertices,
-            edges: geo.edges,
-            ports,
-            desert,
-        })
+        let (mut vertices, mut edges) = (geo.vertices, geo.edges);
+        add_bridge_sites(&mut vertices, &mut edges);
+        Ok(Board { map: map.to_string(), style: def.style, hexes, vertices, edges, ports, desert })
     }
 
     /// Land masses: groups of hexes joined by shared edges.
@@ -903,7 +932,8 @@ mod tests {
                 feed(v as i64);
             }
         }
-        for e in &b.edges {
+        // the bridge sites come after the land edges and have their own tests
+        for e in b.edges.iter().filter(|e| !e.bridge) {
             feed(e.a as i64);
             feed(e.b as i64);
         }
@@ -921,7 +951,7 @@ mod tests {
     fn earth_geometry_is_identical_to_before_maps_became_data() {
         for _ in 0..20 {
             let b = Board::generate("earth", &mut rand::thread_rng());
-            assert_eq!((b.hexes.len(), b.vertices.len(), b.edges.len()), (81, 259, 333));
+            assert_eq!((b.hexes.len(), b.vertices.len(), b.edges.iter().filter(|e| !e.bridge).count()), (81, 259, 333));
             assert_eq!(fingerprint(&b), 0x2f022a530e15220c);
             let ports: Vec<(usize, usize)> = b.ports.iter().map(|p| (p.a, p.b)).collect();
             assert_eq!(ports, GOLDEN_EARTH_PORTS);
@@ -1302,5 +1332,32 @@ mod tests {
         let mut sizes = count_for(&d);
         sizes.sort();
         assert_eq!(sizes, vec![6, 18]);
+    }
+
+    // ------------------------------------------------------------------
+    // Bridge sites
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn bridge_sites_are_sea_edges_between_land_corners() {
+        let b = Board::generate("standard", &mut rand::thread_rng());
+        assert!(b.edges.iter().all(|e| !e.bridge), "the standard island has no channel to bridge");
+
+        let b = Board::generate("earth", &mut rand::thread_rng());
+        let land = b.edges.iter().filter(|e| !e.bridge).count();
+        assert_eq!(land, 333);
+        assert!(b.edges.len() > land, "Earth has channels");
+        // land edges first, so their ids never move; bridge sites after
+        assert!(b.edges[..land].iter().all(|e| !e.bridge) && b.edges[land..].iter().all(|e| e.bridge));
+        let mut seen = std::collections::HashSet::new();
+        for (i, e) in b.edges.iter().enumerate().skip(land) {
+            assert!(e.a < e.b && seen.insert((e.a, e.b)), "each site is listed once");
+            assert!(!b.edges[..land].iter().any(|l| (l.a, l.b) == (e.a, e.b)), "a site is not a land edge");
+            let (va, vb) = (&b.vertices[e.a], &b.vertices[e.b]);
+            assert!((((va.x - vb.x).powi(2) + (va.y - vb.y).powi(2)).sqrt() - 1.0).abs() < 0.01, "one hex side long");
+            assert!(va.edges.contains(&i) && vb.edges.contains(&i), "the corners know the site");
+            // a bridge is not a land connection: the distance rule ignores it
+            assert!(!va.neighbors.contains(&e.b) && !vb.neighbors.contains(&e.a));
+        }
     }
 }

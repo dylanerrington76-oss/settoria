@@ -18,12 +18,10 @@ The server prints two addresses:
     This computer:  http://localhost:3000
     Other devices:  http://192.168.x.x:3000   <- share this one
 
-Everyone opens the address in a browser, enters a name, picks one of 10 colors (orange, purple, gold, green,
-blue, red, mystic blue, white, silver, black; colors already taken are greyed out) and takes a seat.
+Everyone opens the address in a browser, enters a name, picks color and takes a seat.
 The first player to join is the host. Up to 8 players can take a seat. The host picks the **map** (any map in the lobby's list: Standard, Earth and USA to begin with; maps for another number of players than are seated are greyed out, so 5 to 8 players play on Earth or USA), the **turn timer** (Very Fast 30s, Fast 60s,
 Normal 120s, Slow 240s; Normal is the default), can change any of the **game rules** (see below), and presses
-**Start**. The draft order is shuffled when the
-game starts, so the host does not necessarily go first.
+**Start**. 
 
 ## Run it with Docker
 
@@ -56,11 +54,11 @@ Reloading a tab, or a dropped connection, rejoins the same seat automatically.
 
 ## Maps
 
-The host chooses the map in the lobby; it is locked once the game starts.
+Current available base maps:
 
 **Standard**: the base-game board, randomised every game (described under *Rules implemented*).
 
-**Earth**: 81 hexes on 7 islands with 27 harbours. The land is a fixed shape.
+**Earth**: 81 hexes on 7 islands with 27 harbours.
 
 **USA**: 144 hexes in the shape of the United States, as one big island with 25 harbours.
 

@@ -17,6 +17,7 @@ import {
 } from './art';
 import {
   bump,
+  COST_BRIDGE,
   COST_CITY,
   COST_DEV,
   COST_ROAD,
@@ -337,6 +338,7 @@ export function RulesDialog({ settings, onClose }: { settings: Settings; onClose
   return (
     <Modal title="Building costs" onClose={onClose}>
       {row('Road', COST_ROAD)}
+      {settings.bridges && row('Bridge', COST_BRIDGE)}
       {row('Settlement', COST_SETTLEMENT)}
       {row('City', COST_CITY)}
       {row('Development card', COST_DEV)}
@@ -352,6 +354,12 @@ export function RulesDialog({ settings, onClose }: { settings: Settings; onClose
           Longest Road needs at least {settings.longest_road_min} roads in a row; Largest Army needs at least{' '}
           {settings.largest_army_min} knight{settings.largest_army_min === 1 ? '' : 's'}.
         </li>
+        {settings.bridges && (
+          <li>
+            Bridges are roads over a narrow stretch of water between two land corners. A bridge uses one of your road pieces and
+            counts as one road for Longest Road.
+          </li>
+        )}
         <li>
           Each Victory Point card is worth {pts(settings.vp_card_points)}.
         </li>
@@ -731,6 +739,13 @@ function describe(e: LogEvent, v: GameView): ReactNode {
       return (
         <>
           {' built a Road '}
+          <PieceIcon color={color(e.player)} kind="road" />
+        </>
+      );
+    case 'built_bridge':
+      return (
+        <>
+          {' built a Bridge '}
           <PieceIcon color={color(e.player)} kind="road" />
         </>
       );

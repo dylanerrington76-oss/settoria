@@ -19,6 +19,8 @@ export const COST_ROAD: Res = [1, 1, 0, 0, 0];
 export const COST_SETTLEMENT: Res = [1, 1, 0, 1, 1];
 export const COST_CITY: Res = [0, 0, 3, 2, 0];
 export const COST_DEV: Res = [0, 0, 1, 1, 1];
+/** A bridge: 1 brick, 1 lumber and 1 ore (COST_BRIDGE in src/game.rs). */
+export const COST_BRIDGE: Res = [1, 1, 1, 0, 0];
 
 /** How many players one table seats (MIN_PLAYERS and MAX_PLAYERS in src/map_def.rs). */
 export const MIN_PLAYERS = 2;
@@ -111,6 +113,8 @@ export interface Settings {
   points_to_win: number;
   discard_limit: number;
   friendly_robber: boolean;
+  /** Players may build bridges: roads over narrow water (`bridges` in src/game.rs). */
+  bridges: boolean;
   max_roads: number;
   max_cities: number;
   max_settlements: number;
@@ -132,6 +136,7 @@ export const DEFAULT_SETTINGS: Settings = {
   points_to_win: 15,
   discard_limit: 7,
   friendly_robber: false,
+  bridges: false,
   max_roads: 15,
   max_cities: 4,
   max_settlements: 5,
@@ -205,6 +210,8 @@ export interface Vertex {
 export interface Edge {
   a: number;
   b: number;
+  /** A sea edge between two land corners: only a bridge can be built here. Absent on land edges. */
+  bridge?: boolean;
 }
 export interface Port {
   a: number;
@@ -274,6 +281,8 @@ export interface Legal {
   settlements: number[];
   cities: number[];
   roads: number[];
+  /** Where a bridge could go (empty unless the game has bridges on). */
+  bridges: number[];
   hexes: number[];
 }
 /**
@@ -299,6 +308,7 @@ export type LogEvent =
   | { type: 'placed_settlement'; player: number }
   | { type: 'built_settlement'; player: number }
   | { type: 'built_road'; player: number }
+  | { type: 'built_bridge'; player: number }
   | { type: 'built_city'; player: number }
   | { type: 'bought_dev_card'; player: number }
   | { type: 'played_knight'; player: number }

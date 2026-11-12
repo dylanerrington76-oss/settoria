@@ -433,7 +433,7 @@ export function ToolIcon({ kind }: { kind: 'gear' | 'book' | 'expand' | 'info' }
 const BR = '#8a3b2e';
 const BR2 = '#b9604e';
 
-export function ActionIcon({ kind }: { kind: 'trade' | 'dev' | 'road' | 'settlement' | 'city' | 'turn' }) {
+export function ActionIcon({ kind }: { kind: 'trade' | 'dev' | 'road' | 'bridge' | 'settlement' | 'city' | 'turn' }) {
   let body: ReactNode;
   switch (kind) {
     case 'trade':
@@ -466,6 +466,17 @@ export function ActionIcon({ kind }: { kind: 'trade' | 'dev' | 'road' | 'settlem
         <>
           <rect x="19" y="3" width="10" height="42" rx="3" fill={BR} stroke="#5a2118" strokeWidth="2" />
           <rect x="21" y="5" width="3" height="38" rx="1.5" fill={BR2} opacity=".8" />
+        </>
+      );
+      break;
+    case 'bridge':
+      body = (
+        <>
+          <path d="M2 40 Q8 36 14 40 T26 40 T38 40 T46 38" fill="none" stroke="#e8f6fb" strokeWidth="2.4" strokeLinecap="round" opacity=".85" />
+          <path d="M5 22 Q24 4 43 22" fill="none" stroke="#5a2118" strokeWidth="2" />
+          <rect x="3" y="21" width="42" height="8" rx="2.5" fill={BR} stroke="#5a2118" strokeWidth="2" />
+          <path d="M11 22.5 V27.5 M18 22.5 V27.5 M25 22.5 V27.5 M32 22.5 V27.5 M39 22.5 V27.5" stroke={BR2} strokeWidth="2" strokeLinecap="round" />
+          <path d="M9 29 V36 M39 29 V36" stroke="#5a2118" strokeWidth="3" strokeLinecap="round" />
         </>
       );
       break;
