@@ -3,7 +3,7 @@
 // stripe: a hex or harbour drawn in stripes is one the game deals at random.
 import { memo } from 'react';
 import { Glyph, shade } from './art';
-import { ART, RES_OF, STYLE, hexPoints } from './Board';
+import { ART, RES_OF, STYLE, VolcanoArt, hexPoints } from './Board';
 import { EdHex, PortKind, S } from './mapModel';
 import type { Terrain } from './types';
 
@@ -81,6 +81,7 @@ export const HexShape = memo(function HexShape({ hex, uid }: { hex: Pick<EdHex, 
           <Glyph res={res} fill={art.fill} fill2={art.fill2} stroke={art.stroke} />
         </g>
       )}
+      {t === 'volcano' && <VolcanoArt cx={0} cy={0} scale={S} lift={false} />}
       {t === 'desert' && (
         <g transform={`translate(${0.05 * S} ${-0.04 * S}) scale(1.35)`} fill="#7ea45a" stroke="#4f7a38" strokeWidth="1.4" strokeLinejoin="round">
           <rect x="-4" y="-16" width="8" height="30" rx="4" />

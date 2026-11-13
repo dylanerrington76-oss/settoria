@@ -19,7 +19,7 @@
 //! worth knowing about but leave it playable.
 
 use crate::board::{
-    coast_rings, desert_spots, dry_deal, hex_distance, pool_total, port_edge, tokens_clash, valid_token, Geometry, Terrain,
+    coast_rings, desert_spots, dry_deal, hex_distance, is_hot, pool_total, port_edge, tokens_clash, valid_token, Geometry, Terrain,
     NEIGHBOR_STEPS,
 };
 use crate::game::Settings;
@@ -256,6 +256,24 @@ pub(crate) fn check_content(def: &MapDef, geo: &Geometry) -> Vec<MapError> {
                     if hex_distance(coords[i], coords[j]) == 1 && tokens_clash(a, b) {
                         errors.push(MapError::FixedTokensClash { a: coords[i], b: coords[j] });
                     }
+                }
+            }
+        }
+        // A volcano written into the map is always a 6 or 8, whatever number it is given, so it clashes with
+        // any 6 or 8 it touches. (Two fixed 6/8s that touch are already reported just above.)
+        let is_volcano = |i: usize| hexes[i].terrain == Slot::Fixed(Terrain::Volcano);
+        let written_hot = |i: usize| is_hot(fixed[i]);
+        let will_be_hot = |i: usize| is_volcano(i) || written_hot(i);
+        for i in 0..n {
+            for j in i + 1..n {
+                if hex_distance(coords[i], coords[j]) != 1 || !will_be_hot(i) || !will_be_hot(j) || (written_hot(i) && written_hot(j)) {
+                    continue;
+                }
+                // The one of the two whose own number is not already a 6 or 8 is the one that has to change.
+                let culprit = if written_hot(i) { j } else { i };
+                let e = MapError::VolcanoTouchesHot { q: hexes[culprit].q, r: hexes[culprit].r };
+                if !errors.contains(&e) {
+                    errors.push(e);
                 }
             }
         }

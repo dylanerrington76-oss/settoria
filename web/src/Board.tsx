@@ -17,8 +17,9 @@ export const STYLE: Record<Terrain, Style> = {
   fields: { center: '#ffd75f', edge: '#f0b412', border: '#bb850b', hi: '#ffe58f' },
   forest: { center: '#17a047', edge: '#08893c', border: '#066a2d', hi: '#69d252' },
   desert: { center: '#d9d09a', edge: '#c6bc7d', border: '#a39b63', hi: '#e9e2b8' },
+  volcano: { center: '#6b5b55', edge: '#4a3c38', border: '#2f2421', hi: '#9a7f74' },
 };
-export const RES_OF: Record<Terrain, number | null> = { hills: 0, forest: 1, mountains: 2, fields: 3, pasture: 4, desert: null };
+export const RES_OF: Record<Terrain, number | null> = { hills: 0, forest: 1, mountains: 2, fields: 3, pasture: 4, desert: null, volcano: null };
 export const ART: Record<Terrain, { fill: string; fill2: string; stroke?: string }> = {
   hills: { fill: '#f9d3c4', fill2: '#f0b3a0', stroke: '#e48b72' },
   mountains: { fill: '#f6f8f7', fill2: '#dfe4e2', stroke: '#a7aeab' },
@@ -26,7 +27,60 @@ export const ART: Record<Terrain, { fill: string; fill2: string; stroke?: string
   fields: { fill: '#cf9021', fill2: '#e8b13a', stroke: '#a26d0c' },
   forest: { fill: '#3aa24a', fill2: '#58bd5c', stroke: '#176d2b' },
   desert: { fill: '#000', fill2: '#000' },
+  volcano: { fill: '#000', fill2: '#000' },
 };
+
+/** Where corner `i` (0 to 5, clockwise from the upper right) of a hex of radius `r` is. The server numbers a volcano's corners `i + 1`. */
+export function hexCorner(cx: number, cy: number, r: number, i: number): [number, number] {
+  const a = ((60 * i - 30) * Math.PI) / 180;
+  return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+}
+
+/**
+ * The volcano drawn on a hex: a cone with a glowing crater and lava runs, then the numbers 1 to 6 on the
+ * corners the lava can flow down to (corner `i` of the hex is number `i + 1`). Centred on the hex at (cx, cy),
+ * at the board's scale (`S` per hex radius). `lift` adds the board's drop shadow, which only exists in the
+ * board's own `<defs>`.
+ */
+export function VolcanoArt({ cx, cy, cone = true, numbers = true, lift = true, scale = S }: { cx: number; cy: number; cone?: boolean; numbers?: boolean; lift?: boolean; scale?: number }) {
+  const u = scale;
+  const top = cy - 0.43 * u;
+  const base = cy + 0.02 * u;
+  const r = (v: number) => v.toFixed(1);
+  return (
+    <g>
+      {cone && (
+        <>
+      <path
+        d={`M${r(cx - 0.56 * u)},${r(base)} L${r(cx - 0.17 * u)},${r(top)} L${r(cx + 0.17 * u)},${r(top)} L${r(cx + 0.56 * u)},${r(base)} Z`}
+        fill="#7a665f"
+        stroke="#2f2421"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+        filter={lift ? 'url(#lift)' : undefined}
+      />
+      <path d={`M${r(cx + 0.17 * u)},${r(top)} L${r(cx + 0.56 * u)},${r(base)} L${r(cx + 0.1 * u)},${r(base)} Z`} fill="#5a4943" opacity=".7" />
+      <ellipse cx={cx} cy={top} rx={0.17 * u} ry={0.06 * u} fill="#ffb02e" stroke="#2f2421" strokeWidth="1.4" />
+      <ellipse cx={cx} cy={top - 0.004 * u} rx={0.1 * u} ry={0.03 * u} fill="#fff2a8" />
+      <path d={`M${r(cx - 0.05 * u)},${r(top + 0.04 * u)} Q${r(cx - 0.1 * u)},${r(cy - 0.3 * u)} ${r(cx - 0.03 * u)},${r(cy - 0.22 * u)} Q${r(cx - 0.1 * u)},${r(cy - 0.1 * u)} ${r(cx - 0.17 * u)},${r(base)}`} fill="none" stroke="#ff6a1a" strokeWidth="3.2" strokeLinecap="round" />
+      <path d={`M${r(cx + 0.06 * u)},${r(top + 0.04 * u)} Q${r(cx + 0.12 * u)},${r(cy - 0.27 * u)} ${r(cx + 0.08 * u)},${r(cy - 0.18 * u)} Q${r(cx + 0.14 * u)},${r(cy - 0.08 * u)} ${r(cx + 0.26 * u)},${r(base)}`} fill="none" stroke="#ff9d2e" strokeWidth="2.4" strokeLinecap="round" />
+        </>
+      )}
+      {numbers &&
+        [0, 1, 2, 3, 4, 5].map((i) => {
+          const [px, py] = hexCorner(cx, cy, u * 0.64, i);
+          return (
+            <g key={i} className="volcano-corner">
+              <circle cx={px} cy={py} r={0.125 * u} fill="#2f2421" stroke="#ff9d2e" strokeWidth="1.5" />
+              <text x={px} y={py} dy="0.36em" textAnchor="middle" fontSize={0.18 * u} fontWeight="800" fill="#ffe9c2">
+                {i + 1}
+              </text>
+            </g>
+          );
+        })}
+    </g>
+  );
+}
 
 export function hexPoints(cx: number, cy: number, r: number): string {
   return [0, 1, 2, 3, 4, 5]
@@ -415,6 +469,7 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
                 <Glyph res={res} fill={art.fill} fill2={art.fill2} stroke={art.stroke} />
               </g>
             )}
+            {h.terrain === 'volcano' && <VolcanoArt cx={cx} cy={cy} numbers={false} />}
             {h.terrain === 'desert' && (
               <g transform={`translate(${cx + 0.22 * S} ${cy - 0.3 * S})`} fill="#7ea45a" stroke="#4f7a38" strokeWidth="1.4" strokeLinejoin="round">
                 <rect x="-4" y="-16" width="8" height="30" rx="4" />
@@ -445,6 +500,9 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
                   ))}
               </g>
             )}
+
+            {/* the volcano's corner numbers go on top of its number token */}
+            {h.terrain === 'volcano' && <VolcanoArt cx={cx} cy={cy} cone={false} />}
           </g>
         );
       })}
@@ -521,6 +579,35 @@ export default function Board({ view, vertexTargets, edgeTargets, hexTargets, sh
           </g>
         );
       })}
+
+      {/* settlements on loan after lava hit a city: a crack in the base */}
+      {view.damaged.map((i) => {
+        const v = board.vertices[i];
+        return (
+          <g key={`dm${i}`} className="damaged" transform={`translate(${v.x * S} ${v.y * S + 9})`}>
+            <path d="M-9 0 L-3 -3 L0 2 L4 -2 L9 1" fill="none" stroke="#ff5a1f" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+            <title>Damaged by lava: repair this settlement (upgrade it to a city) before building another city</title>
+          </g>
+        );
+      })}
+
+      {/* where the last lava flow ran */}
+      {view.lava &&
+        (() => {
+          const hex = board.hexes[view.lava.hex];
+          const v = board.vertices[view.lava.vertex];
+          if (!hex || !v) return null;
+          const [hx, hy] = [hex.x * S, hex.y * S];
+          return (
+            <g className="lava" pointerEvents="none">
+              <line x1={hx} y1={hy - 0.43 * S} x2={v.x * S} y2={v.y * S} stroke="#ff5a1f" strokeWidth="7" strokeLinecap="round" opacity=".75" />
+              <line x1={hx} y1={hy - 0.43 * S} x2={v.x * S} y2={v.y * S} stroke="#ffd25e" strokeWidth="2.6" strokeLinecap="round" />
+              <circle cx={v.x * S} cy={v.y * S} r="17" fill="#ff5a1f" opacity=".55" />
+              <circle cx={v.x * S} cy={v.y * S} r="10" fill="#ffd25e" opacity=".9" />
+              <title>{`Lava flowed down corner ${view.lava.die}`}</title>
+            </g>
+          );
+        })()}
 
       {/* robber */}
       {(() => {

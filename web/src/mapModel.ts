@@ -5,6 +5,7 @@
 //
 //   striped hex   a land hex whose terrain is dealt at random:   { "q": 0, "r": 0 }
 //   desert        a land hex that is always a desert:            { "q": 0, "r": 0, "terrain": "desert" }
+//   volcano       a numbered hex that is always a volcano (its number is always a 6 or 8): { "q": 0, "r": 0, "terrain": "volcano" }
 //   port          a harbour on a coast edge, kind dealt at random: { "q": 0, "r": 0, "side": 4 }
 //
 // The pools the game deals from (`terrain_pool`, `token_pool`, the harbour `pool`) are worked out from what
@@ -67,7 +68,7 @@ export interface Meta {
 }
 
 export const PORT_KINDS: PortKind[] = ['any', 'brick', 'lumber', 'ore', 'grain', 'wool'];
-export const TERRAINS: Terrain[] = ['hills', 'forest', 'mountains', 'fields', 'pasture', 'desert'];
+export const TERRAINS: Terrain[] = ['hills', 'forest', 'mountains', 'fields', 'pasture', 'desert', 'volcano'];
 /** The order in which leftover hexes go to resources when the pool can't be split evenly (as in Standard). */
 const SPARE_ORDER: Terrain[] = ['forest', 'fields', 'pasture', 'hills', 'mountains'];
 /** The 18 tokens of the standard board, in the order they are handed out when a map has fewer (or more). */
@@ -583,6 +584,22 @@ export function checkMap(layout: Layout, meta: Meta): Issue[] {
         if (a.number !== null && b.number !== null && a.terrain !== 'desert' && b.terrain !== 'desert' && hexDistance(a, b) === 1 && clash(a.number, b.number)) {
           issues.push({ level: 'error', text: `Touching hexes (${a.q}, ${a.r}) and (${b.q}, ${b.r}) have fixed numbers that are not allowed to touch.` });
         }
+      }
+    }
+    // A volcano is always a 6 or 8, whatever number it is given, so it clashes with any 6 or 8 it touches
+    // (`VolcanoTouchesHot` in src/validate.rs). Two written-in 6/8s that touch are reported just above.
+    const writtenHot = (h: EdHex) => h.terrain !== 'desert' && h.number !== null && isHot(h.number);
+    const willBeHot = (h: EdHex) => h.terrain === 'volcano' || writtenHot(h);
+    const reported = new Set<EdHex>();
+    for (let i = 0; i < hexes.length; i++) {
+      for (let j = i + 1; j < hexes.length; j++) {
+        const a = hexes[i];
+        const b = hexes[j];
+        if (hexDistance(a, b) !== 1 || !willBeHot(a) || !willBeHot(b) || (writtenHot(a) && writtenHot(b))) continue;
+        const culprit = writtenHot(a) ? b : a; // the one whose own number is not already a 6 or 8 has to change
+        if (reported.has(culprit)) continue;
+        reported.add(culprit);
+        issues.push({ level: 'error', text: `The volcano at (${culprit.q}, ${culprit.r}) is always a 6 or 8, but it touches another 6 or 8, and those are not allowed to touch.` });
       }
     }
   }

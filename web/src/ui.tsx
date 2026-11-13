@@ -128,6 +128,31 @@ export function ResourceButtons({
 }
 
 /* ------------------------------------------------------------------ */
+/* Volcano: free resource pick                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Shown over the board while a volcano's players pick their free cards, one player at a time.
+ * The player whose pick it is gets the five resource buttons (a resource the bank has run out of is disabled);
+ * everybody else sees who is choosing.
+ */
+export function VolcanoBar({ v, onPick }: { v: GameView; onPick: (res: number) => void }) {
+  const vol = v.volcano;
+  if (!vol) return null;
+  const mine = vol.player === v.you;
+  const who = v.players[vol.player];
+  return (
+    <section className="volcano-bar" aria-label="Volcano" aria-live="polite">
+      <h2>
+        <span aria-hidden="true">🌋</span> {mine ? 'The volcano erupts! Pick a free resource' : `${who.name} is picking a free resource from the volcano`}
+        {vol.left > 1 && <small> ({vol.left} cards left to pick)</small>}
+      </h2>
+      {mine && <ResourceButtons selected={null} onPick={onPick} disabled={(i) => v.bank[i] === 0} label={(i) => `${v.bank[i]} in bank`} />}
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Discard panel (docked above the hand)                               */
 /* ------------------------------------------------------------------ */
 
@@ -328,7 +353,7 @@ export function PickResourceDialog({
 /** "1 point", "2 points". */
 const pts = (n: number): string => `${n} point${n === 1 ? '' : 's'}`;
 
-export function RulesDialog({ settings, onClose }: { settings: Settings; onClose: () => void }) {
+export function RulesDialog({ settings, volcano, onClose }: { settings: Settings; volcano?: boolean; onClose: () => void }) {
   const row = (label: ReactNode, cost: Res) => (
     <div className="cost-row">
       <span>{label}</span>
@@ -368,6 +393,14 @@ export function RulesDialog({ settings, onClose }: { settings: Settings; onClose
           {settings.friendly_robber &&
             ` Friendly Robber is on: it can't go next to a player with ${FRIENDLY_ROBBER_MAX_VP} points or fewer.`}
         </li>
+        {volcano && (
+          <li>
+            Volcano: when its number is rolled, each settlement next to it takes 1 free card of your choice and each city 2. Then a die
+            decides which of its six numbered corners the lava runs down: a settlement there is destroyed, a city is reduced to a
+            settlement. If you have no settlement piece left to put in a city's place, the settlement is still built, and you can't build
+            another city until you upgrade it again. The robber on the volcano stops the free cards but not the eruption.
+          </li>
+        )}
         <li>
           Trade with the bank at {settings.bank_ratio}:1, or better with a harbour.
         </li>
@@ -648,6 +681,7 @@ const TIMEOUT_TEXT: Record<ClockKind, string> = {
   discard: 'Time is up; remaining cards were discarded at random',
   robber: ' ran out of time; the robber was placed on a 6 or 8',
   steal: ' ran out of time; a victim was chosen at random',
+  volcano: ' ran out of time; free resources were picked for them at random',
   turn: ' ran out of time; their turn was ended',
 };
 
@@ -727,6 +761,30 @@ function describe(e: LogEvent, v: GameView): ReactNode {
           <Name v={v} id={e.victim} />
         </>
       );
+    case 'volcano_picked':
+      return (
+        <>
+          {' took a free '}
+          <MiniCard res={e.resource} />
+          {' from the volcano'}
+        </>
+      );
+    case 'volcano_blocked':
+      return 'The robber is on the volcano: no free resources, but it still erupts';
+    case 'volcano_bank_empty':
+      return 'The bank is out of cards: the rest of the volcano picks were dropped';
+    case 'lava_flow': {
+      const where = `Lava ran down corner ${e.die}`;
+      if (e.effect === 'nothing' || e.owner === null) return `${where}, but nothing was there`;
+      return (
+        <>
+          {`${where}: `}
+          <Name v={v} id={e.owner} />
+          {e.effect === 'destroyed' ? '’s settlement was destroyed ' : '’s city was reduced to a settlement '}
+          <PieceIcon color={color(e.owner)} kind="settlement" />
+        </>
+      );
+    }
     case 'placed_settlement':
     case 'built_settlement':
       return (

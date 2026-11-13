@@ -157,7 +157,7 @@ export const DEFAULT_SETTINGS: Settings = {
 export const FRIENDLY_ROBBER_MAX_VP = 2;
 
 /** What the running countdown is for. Only `turn` is the standard per-turn clock. */
-export type ClockKind = 'setup_settlement' | 'setup_road' | 'roll' | 'discard' | 'robber' | 'steal' | 'turn';
+export type ClockKind = 'setup_settlement' | 'setup_road' | 'roll' | 'discard' | 'robber' | 'steal' | 'volcano' | 'turn';
 export const CLOCK_LABELS: Record<ClockKind, string> = {
   setup_settlement: 'Settlement',
   setup_road: 'Road',
@@ -165,6 +165,7 @@ export const CLOCK_LABELS: Record<ClockKind, string> = {
   discard: 'Discard',
   robber: 'Robber',
   steal: 'Rob',
+  volcano: 'Volcano',
   turn: '',
 };
 export const CLOCK_TITLES: Record<ClockKind, string> = {
@@ -174,6 +175,7 @@ export const CLOCK_TITLES: Record<ClockKind, string> = {
   discard: 'Time left to discard (not counted against turn time)',
   robber: 'Time left to move the robber (not counted against turn time)',
   steal: 'Time left to choose who to rob (not counted against turn time)',
+  volcano: 'Time left to pick a free resource from the volcano (not counted against turn time)',
   turn: 'Time left on this turn',
 };
 export interface TimerView {
@@ -184,13 +186,14 @@ export interface TimerView {
   total_ms: number;
 }
 
-export type Terrain = 'hills' | 'forest' | 'mountains' | 'fields' | 'pasture' | 'desert';
+export type Terrain = 'hills' | 'forest' | 'mountains' | 'fields' | 'pasture' | 'desert' | 'volcano';
 export type Phase =
   | 'setup'
   | 'roll'
   | 'discard'
   | 'move_robber'
   | 'steal'
+  | 'volcano_pick'
   | 'main'
   | 'road_building'
   | 'game_over';
@@ -277,6 +280,21 @@ export interface Trade {
   want: Res;
   replies: Reply[];
 }
+/** One lava flow: the volcano's hex, the die (1 to 6) and the corner it ran down (`Lava` in src/game.rs). */
+export interface Lava {
+  hex: number;
+  /** The volcano's corners are numbered 1 to 6 clockwise from the upper right: corner `i` of the hex is `i + 1`. */
+  die: number;
+  vertex: number;
+}
+/** Who is picking a free resource from an erupting volcano, and how many cards they still take (`VolcanoView` in src/game.rs). */
+export interface VolcanoView {
+  hex: number;
+  player: number;
+  left: number;
+}
+/** What a lava flow did to the corner it reached (`LavaEffect` in src/log_event.rs). */
+export type LavaEffect = 'nothing' | 'destroyed' | 'demoted';
 export interface Legal {
   settlements: number[];
   cities: number[];
@@ -305,6 +323,10 @@ export type LogEvent =
   | { type: 'robber_must_move' }
   | { type: 'robber_moved'; player: number }
   | { type: 'stole'; player: number; victim: number }
+  | { type: 'volcano_picked'; player: number; resource: number }
+  | { type: 'volcano_blocked'; hex: number }
+  | { type: 'volcano_bank_empty' }
+  | { type: 'lava_flow'; hex: number; die: number; effect: LavaEffect; owner: number | null }
   | { type: 'placed_settlement'; player: number }
   | { type: 'built_settlement'; player: number }
   | { type: 'built_road'; player: number }
@@ -349,6 +371,12 @@ export interface GameView {
   setup_needs: 'settlement' | 'road' | null;
   discards: [number, number][];
   steal_candidates: number[];
+  /** Set while players pick free resources from an erupting volcano (one player at a time). */
+  volcano: VolcanoView | null;
+  /** Where the last lava flow went; cleared by the next roll. */
+  lava: Lava | null;
+  /** Corners holding a settlement that is on loan after lava hit a city and its owner had no settlement piece left. */
+  damaged: number[];
   road_building_left: number;
   /** Offers currently open; only the player whose turn it is can have any. */
   trades: Trade[];

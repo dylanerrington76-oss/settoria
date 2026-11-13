@@ -46,7 +46,12 @@ interface View {
   y: number;
   k: number;
 }
-type Piece = 'wild' | 'desert' | 'port';
+type Piece = 'wild' | 'desert' | 'volcano' | 'port';
+
+/** The terrain a hex piece is written with: a striped hex is dealt at random (null). */
+const pieceTerrain = (piece: Piece): EdHex['terrain'] => (piece === 'desert' ? 'desert' : piece === 'volcano' ? 'volcano' : null);
+/** The bar piece a hex of this terrain came from. */
+const terrainPiece = (terrain: EdHex['terrain']): Piece => (terrain === 'desert' ? 'desert' : terrain === 'volcano' ? 'volcano' : 'wild');
 type Target = { t: 'cell'; q: number; r: number; ok: boolean } | { t: 'edge'; q: number; r: number; side: number } | { t: 'bar' } | { t: 'none' };
 
 /** A piece being dragged: new from the bar (`id` null) or one already on the map. Positions are screen pixels. */
@@ -122,6 +127,7 @@ const TILES: { piece: Piece; label: string; hint: string }[] = [
   { piece: 'wild', label: 'Hex', hint: 'any resource or desert' },
   { piece: 'port', label: 'Port', hint: 'on the coast' },
   { piece: 'desert', label: 'Desert', hint: 'always a desert' },
+  { piece: 'volcano', label: 'Volcano', hint: 'free resources, then lava' },
 ];
 
 function TileArt({ piece }: { piece: Piece }) {
@@ -134,7 +140,7 @@ function TileArt({ piece }: { piece: Piece }) {
           <Ship kind={null} uid={uid} />
         </g>
       ) : (
-        <HexShape hex={{ terrain: piece === 'desert' ? 'desert' : null, number: null }} uid={uid} />
+        <HexShape hex={{ terrain: pieceTerrain(piece), number: null }} uid={uid} />
       )}
     </svg>
   );
@@ -377,7 +383,7 @@ export default function MapEditor({ onBack }: { onBack: () => void }) {
       }
       if (!inRange(cell.q, cell.r)) return showToast('That is as far as a map can reach.');
       const id = nextId.current++;
-      commit({ ...l, hexes: [...l.hexes, { id, ...cell, terrain: piece === 'desert' ? 'desert' : null, number: null }] });
+      commit({ ...l, hexes: [...l.hexes, { id, ...cell, terrain: pieceTerrain(piece), number: null }] });
       setSel({ kind: 'hex', id });
     },
     [commit, showToast],
@@ -407,7 +413,7 @@ export default function MapEditor({ onBack }: { onBack: () => void }) {
       const t = d.target;
       if (d.id === null) {
         // a new piece from the bar
-        if (!d.moved && t.t === 'bar') return addNear(d.kind === 'port' ? 'port' : d.hex.terrain === 'desert' ? 'desert' : 'wild');
+        if (!d.moved && t.t === 'bar') return addNear(d.kind === 'port' ? 'port' : terrainPiece(d.hex.terrain));
         if (d.kind === 'hex') {
           if (t.t === 'cell' && t.ok) {
             const id = nextId.current++;
@@ -462,7 +468,7 @@ export default function MapEditor({ onBack }: { onBack: () => void }) {
   const onHexDown = useCallback((e: ReactPointerEvent, hex: EdHex) => beginDrag(e, 'hex', hex.id, hex, newPort()), [beginDrag]);
   const onPortDown = useCallback((e: ReactPointerEvent, port: EdPort) => beginDrag(e, 'port', port.id, newHex(null), port), [beginDrag]);
   const onTileDown = (e: ReactPointerEvent, piece: Piece) =>
-    beginDrag(e, piece === 'port' ? 'port' : 'hex', null, newHex(piece === 'desert' ? 'desert' : null), newPort());
+    beginDrag(e, piece === 'port' ? 'port' : 'hex', null, newHex(pieceTerrain(piece)), newPort());
 
   const dragging = drag !== null;
   useLayoutEffect(() => {

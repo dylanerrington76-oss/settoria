@@ -16,6 +16,7 @@ import {
   PickResourceDialog,
   PlayerRow,
   DiscardPanel,
+  VolcanoBar,
   RulesDialog,
   SettingsDialog,
   TradeBanners,
@@ -298,7 +299,6 @@ export function Lobby({
       setUploading(false);
     }
   };
-  // Only a drag that carries files is taken, so dragging text around the page does nothing here.
   const carriesFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
   return (
     <div className="centered">
@@ -325,7 +325,7 @@ export function Lobby({
             })}
           </ul>
           <p className="muted">
-            Friends join by opening <b>{location.host}</b> in their browser.
+            Others join by opening <b>{location.host}</b> in their browser.
           </p>
           <fieldset
             className={'timer-modes' + (dragging ? ' dropping' : '')}
@@ -465,6 +465,8 @@ function statusFor(v: GameView): string {
       return mine ? 'Move the Robber' : `${cur} is moving the robber`;
     case 'steal':
       return mine ? 'Select Player to Rob' : `${cur} is choosing who to rob`;
+    case 'volcano_pick':
+      return v.volcano?.player === v.you ? 'Pick a Free Resource' : `${v.players[v.volcano?.player ?? v.current]?.name} is picking from the volcano`;
     case 'main':
       return mine ? 'Your Turn' : `${cur}'s Turn`;
     case 'road_building':
@@ -549,7 +551,6 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
   const [pips, setPips] = useState(true);
   const [logOpen, setLogOpen] = useState(true);
   const [pick, setPick] = useState<Res>([0, 0, 0, 0, 0]);
-  /** After the game: the stats screen (true) or the board (false). */
   const [statsOpen, setStatsOpen] = useState(true);
 
   const mine = v.current === v.you;
@@ -640,6 +641,8 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
               ))}
             </div>
           )}
+
+          {v.phase === 'volcano_pick' && <VolcanoBar v={v} onPick={(res) => act({ type: 'volcano_pick', resource: res })} />}
 
           {showDice && (
             <button className={'dice' + (canRoll ? ' ready' : '')} disabled={!canRoll} onClick={() => act({ type: 'roll' })} aria-label={canRoll ? 'Roll dice' : 'Last roll'}>
@@ -808,7 +811,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
           }}
         />
       )}
-      {dialog === 'rules' && <RulesDialog settings={v.settings} onClose={() => setDialog(null)} />}
+      {dialog === 'rules' && <RulesDialog settings={v.settings} volcano={v.board.hexes.some((h) => h.terrain === 'volcano')} onClose={() => setDialog(null)} />}
       {dialog === 'info' && <InfoDialog v={v} onClose={() => setDialog(null)} />}
       {dialog === 'settings' && <SettingsDialog pips={pips} onPips={setPips} onFullscreen={toggleFull} onClose={() => setDialog(null)} />}
       {v.phase === 'game_over' && (

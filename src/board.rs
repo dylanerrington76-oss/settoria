@@ -25,6 +25,10 @@ pub enum Terrain {
     Fields,
     Pasture,
     Desert,
+    /// Produces no resource of its own. When its number is rolled, each player with a building on it
+    /// picks free resources and then the lava flows (see `Game::erupt`). It is a numbered hex, and its number is
+    /// always a 6 or 8 (see `deal_layout`).
+    Volcano,
 }
 
 impl Terrain {
@@ -37,6 +41,7 @@ impl Terrain {
             Terrain::Fields => "fields",
             Terrain::Pasture => "pasture",
             Terrain::Desert => "desert",
+            Terrain::Volcano => "volcano",
         }
     }
 }
@@ -49,8 +54,12 @@ impl Terrain {
             Terrain::Mountains => Some(Resource::Ore),
             Terrain::Fields => Some(Resource::Grain),
             Terrain::Pasture => Some(Resource::Wool),
-            Terrain::Desert => None,
+            Terrain::Desert | Terrain::Volcano => None,
         }
+    }
+
+    pub fn is_volcano(self) -> bool {
+        self == Terrain::Volcano
     }
 }
 
@@ -280,9 +289,97 @@ pub(crate) fn desert_spots(def: &MapDef, coords: &[(i32, i32)]) -> Vec<usize> {
         .collect()
 }
 
+/// A volcano's number token is always one of these.
+const VOLCANO_TOKENS: [u8; 2] = [6, 8];
+
+/// Shuffles tried when placing volcanoes from the terrain pool before giving up (each shuffle is a greedy pass,
+/// so an unlucky one can fail where another would not).
+const VOLCANO_TRIES: usize = 50;
+
+/// Take the token for a volcano out of `left` (what is still in the token pool): a 6 or 8 if there is one.
+/// If the pool has none left, a random token is dropped instead and a 6 or 8 is made up, so a volcano
+/// always gets one - the pool only ever shrinks by one token per volcano, so it still matches the hexes.
+fn take_volcano_token<R: Rng>(left: &mut std::collections::BTreeMap<u8, u32>, rng: &mut R) -> u8 {
+    let list = |left: &std::collections::BTreeMap<u8, u32>, hot_only: bool| -> Vec<u8> {
+        left.iter()
+            .filter(|(&v, _)| !hot_only || is_hot(Some(v)))
+            .flat_map(|(&v, &c)| std::iter::repeat(v).take(c as usize))
+            .collect()
+    };
+    let (taken, token) = match list(left, true).choose(rng) {
+        Some(&v) => (Some(v), v),
+        None => (list(left, false).choose(rng).copied(), *VOLCANO_TOKENS.choose(rng).expect("two tokens")),
+    };
+    if let Some(v) = taken {
+        if let Some(c) = left.get_mut(&v) {
+            *c -= 1;
+            if *c == 0 {
+                left.remove(&v);
+            }
+        }
+    }
+    token
+}
+
+/// Whether a hex touching `h` holds a 6 or 8 in `numbers`.
+fn touches_hot(coords: &[(i32, i32)], numbers: &[Option<u8>], h: usize) -> bool {
+    (0..coords.len()).any(|g| g != h && hex_distance(coords[h], coords[g]) == 1 && is_hot(numbers[g]))
+}
+
+/// Choose `wanted` hexes of random terrain for the volcanoes in the terrain pool. A volcano needs a 6 or 8, so
+/// it may go on a hex that already has one written in, or on a hex with no number written in (it will be
+/// given one). With `spread` on, a hex that would be given a 6 or 8 must not touch another 6 or 8.
+/// On failure, says how many it could place at best.
+fn pick_volcano_spots<R: Rng>(
+    rng: &mut R,
+    coords: &[(i32, i32)],
+    fixed: &[Option<u8>],
+    terrains: &[Option<Terrain>],
+    wanted: usize,
+    spread: bool,
+) -> Result<Vec<usize>, usize> {
+    if wanted == 0 {
+        return Ok(vec![]);
+    }
+    let candidates: Vec<usize> = (0..coords.len())
+        .filter(|&i| terrains[i].is_none() && fixed[i].map_or(true, |v| is_hot(Some(v))))
+        .collect();
+    let mut best = 0;
+    for _ in 0..VOLCANO_TRIES {
+        let mut order = candidates.clone();
+        order.shuffle(rng);
+        let mut numbers = fixed.to_vec();
+        let mut chosen = vec![];
+        for &i in &order {
+            if chosen.len() == wanted {
+                break;
+            }
+            if fixed[i].is_none() {
+                if spread && touches_hot(coords, &numbers, i) {
+                    continue;
+                }
+                numbers[i] = Some(VOLCANO_TOKENS[0]); // stands for "a 6 or 8 goes here"
+            }
+            chosen.push(i);
+        }
+        if chosen.len() == wanted {
+            return Ok(chosen);
+        }
+        best = best.max(chosen.len());
+    }
+    Err(best)
+}
+
 /// Deal terrain and number tokens to every hex of a map that has passed `validate::check_content`.
 ///
-/// What can still go wrong is the luck of the deal (`TokenPlacementFailed`). The pool-size checks are
+/// Every volcano gets a 6 or 8 (see `Terrain::Volcano`), so volcanoes are settled before the rest of the
+/// tokens are dealt: a volcano written into the map keeps its number if that is a 6 or 8 and otherwise
+/// takes one (from the pool if it holds one, made up if not); a volcano from the terrain pool goes on a
+/// hex that has, or can be given, a 6 or 8. Those tokens are then fixed in place, so the rest of the deal
+/// keeps clear of them like any other written-in number.
+///
+/// What can still go wrong is the luck of the deal (`TokenPlacementFailed`), or volcanoes that have nowhere
+/// to go (`NotEnoughVolcanoSpots`, `VolcanoTouchesHot`). The pool-size checks are
 /// repeated here as a guard anyway, because a pool is expanded into a list and a huge count in a hostile
 /// file would be a huge list.
 fn deal_layout<R: Rng>(def: &MapDef, coords: &[(i32, i32)], rng: &mut R) -> Result<Layout, MapError> {
@@ -305,7 +402,7 @@ fn deal_layout<R: Rng>(def: &MapDef, coords: &[(i32, i32)], rng: &mut R) -> Resu
     // From here on the pool holds exactly `random_hexes.len()` (at most MAX_HEXES) terrains.
 
     // Deserts from the pool go first, only where a number isn't written in and (if asked) away from
-    // the deserts written into the map; the rest of the pool fills what is left.
+    // the deserts written into the map.
     let deserts_wanted = def.terrain_pool.get(&Terrain::Desert).copied().unwrap_or(0) as usize;
     let mut spots = desert_spots(def, coords);
     if spots.len() < deserts_wanted {
@@ -315,10 +412,58 @@ fn deal_layout<R: Rng>(def: &MapDef, coords: &[(i32, i32)], rng: &mut R) -> Resu
     for &i in spots.iter().take(deserts_wanted) {
         terrains[i] = Some(Terrain::Desert);
     }
+
+    // --- number tokens -------------------------------------------------------
+    // `fixed` starts as the numbers written into the map; volcanoes add to it below.
+    let mut fixed: Vec<Option<u8>> = vec![None; n];
+    for (i, h) in def.hexes.iter().enumerate() {
+        if let Slot::Fixed(v) = h.number {
+            fixed[i] = Some(v);
+        }
+    }
+    // Hexes still waiting for a token. A hex whose terrain is still open is not a desert (the deserts are
+    // all placed by now), so it needs one.
+    let waiting = |fixed: &[Option<u8>], terrains: &[Option<Terrain>]| -> Vec<usize> {
+        (0..n).filter(|&i| terrains[i] != Some(Terrain::Desert) && fixed[i].is_none()).collect()
+    };
+    let pool = pool_total(&def.token_pool);
+    let needed = waiting(&fixed, &terrains).len();
+    if pool != needed as u64 {
+        return Err(MapError::TokenPoolMismatch { needed, pool });
+    }
+    let spread = def.constraints.spread_tokens;
+    let mut left = def.token_pool.clone();
+
+    // Volcanoes written into the map.
+    for i in 0..n {
+        if def.hexes[i].terrain != Slot::Fixed(Terrain::Volcano) {
+            continue;
+        }
+        match fixed[i] {
+            Some(v) if is_hot(Some(v)) => continue, // already a 6 or 8
+            Some(_) => fixed[i] = VOLCANO_TOKENS.choose(rng).copied(),
+            None => fixed[i] = Some(take_volcano_token(&mut left, rng)),
+        }
+        if spread && touches_hot(coords, &fixed, i) {
+            return Err(MapError::VolcanoTouchesHot { q: def.hexes[i].q, r: def.hexes[i].r });
+        }
+    }
+    // Volcanoes from the terrain pool.
+    let volcanoes_wanted = def.terrain_pool.get(&Terrain::Volcano).copied().unwrap_or(0) as usize;
+    let volcano_spots = pick_volcano_spots(rng, coords, &fixed, &terrains, volcanoes_wanted, spread)
+        .map_err(|available| MapError::NotEnoughVolcanoSpots { wanted: volcanoes_wanted, available })?;
+    for &i in &volcano_spots {
+        terrains[i] = Some(Terrain::Volcano);
+        if fixed[i].is_none() {
+            fixed[i] = Some(take_volcano_token(&mut left, rng));
+        }
+    }
+
+    // --- the rest of the terrain ---------------------------------------------
     let mut bag: Vec<Terrain> = def
         .terrain_pool
         .iter()
-        .filter(|(&t, _)| t != Terrain::Desert)
+        .filter(|(&t, _)| t != Terrain::Desert && t != Terrain::Volcano)
         .flat_map(|(&t, &count)| std::iter::repeat(t).take(count as usize))
         .collect();
     bag.shuffle(rng);
@@ -333,24 +478,13 @@ fn deal_layout<R: Rng>(def: &MapDef, coords: &[(i32, i32)], rng: &mut R) -> Resu
         .map(|t| t.ok_or(MapError::Internal("a hex was left without terrain")))
         .collect::<Result<_, _>>()?;
 
-    // --- number tokens -------------------------------------------------------
-    let mut fixed: Vec<Option<u8>> = vec![None; n];
-    for (i, h) in def.hexes.iter().enumerate() {
-        if let Slot::Fixed(v) = h.number {
-            fixed[i] = Some(v);
-        }
-    }
+    // --- deal the rest of the tokens -------------------------------------------
     let cells: Vec<usize> = (0..n).filter(|&i| terrains[i] != Terrain::Desert && fixed[i].is_none()).collect();
-    let pool = pool_total(&def.token_pool);
-    if pool != cells.len() as u64 {
-        return Err(MapError::TokenPoolMismatch { needed: cells.len(), pool });
+    let tokens: Vec<u8> = left.iter().flat_map(|(&v, &count)| std::iter::repeat(v).take(count as usize)).collect();
+    if tokens.len() != cells.len() {
+        return Err(MapError::Internal("the token pool and the hexes waiting for one disagree"));
     }
-    let tokens: Vec<u8> = def
-        .token_pool
-        .iter()
-        .flat_map(|(&v, &count)| std::iter::repeat(v).take(count as usize))
-        .collect();
-    let numbers = deal_tokens(rng, coords, &fixed, &cells, &tokens, def.constraints.spread_tokens)?;
+    let numbers = deal_tokens(rng, coords, &fixed, &cells, &tokens, spread)?;
     Ok(Layout { terrains, numbers })
 }
 
@@ -1359,5 +1493,148 @@ mod tests {
             // a bridge is not a land connection: the distance rule ignores it
             assert!(!va.neighbors.contains(&e.b) && !vb.neighbors.contains(&e.a));
         }
+    }
+
+    // ---- volcanoes are always a 6 or 8 ----
+
+    /// The flower with the ring hex at (1, 0) written in as a volcano (hex 1), five random hexes left,
+    /// and `tokens` as the pool for the six numbered hexes.
+    fn volcano_flower(tokens: [(u8, u32); 6]) -> MapDef {
+        let mut d = flower();
+        d.hexes[1].terrain = Slot::Fixed(Terrain::Volcano);
+        d.terrain_pool = BTreeMap::from([(Terrain::Forest, 2), (Terrain::Hills, 2), (Terrain::Fields, 1)]);
+        d.token_pool = BTreeMap::from(tokens);
+        d
+    }
+
+    fn sorted_numbers(b: &Board) -> Vec<u8> {
+        let mut nums: Vec<u8> = b.hexes.iter().filter_map(|h| h.number).collect();
+        nums.sort();
+        nums
+    }
+
+    #[test]
+    fn a_volcano_takes_a_6_or_8_from_the_pool_when_it_has_one() {
+        let d = volcano_flower([(3, 1), (4, 1), (8, 1), (9, 1), (10, 1), (11, 1)]);
+        for _ in 0..200 {
+            let b = build(&d).unwrap();
+            assert_eq!(b.hexes[1].terrain, Terrain::Volcano);
+            assert_eq!(b.hexes[1].number, Some(8));
+            assert_eq!(sorted_numbers(&b), vec![3, 4, 8, 9, 10, 11], "the pool is used up exactly");
+            assert_tokens_spread(&b);
+        }
+    }
+
+    #[test]
+    fn a_volcano_gets_a_6_or_8_even_when_the_pool_has_none() {
+        let d = volcano_flower([(3, 1), (4, 1), (5, 1), (9, 1), (10, 1), (11, 1)]);
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..200 {
+            let b = build(&d).unwrap();
+            let n = b.hexes[1].number.unwrap();
+            assert!(n == 6 || n == 8);
+            seen.insert(n);
+            // one pool token was dropped to make room, the other five are still there
+            let others: Vec<u8> = b.hexes.iter().enumerate().filter(|&(i, _)| i != 1).filter_map(|(_, h)| h.number).collect();
+            assert_eq!(others.len(), 5);
+            assert!(others.iter().all(|t| [3, 4, 5, 9, 10, 11].contains(t)));
+            assert_tokens_spread(&b);
+        }
+        assert_eq!(seen.len(), 2, "both a 6 and an 8 come up");
+    }
+
+    #[test]
+    fn a_number_written_on_a_volcano_is_kept_if_it_is_a_6_or_8_and_replaced_if_not() {
+        let mut d = volcano_flower([(3, 1), (4, 1), (9, 1), (10, 1), (11, 1), (2, 0)]);
+        d.token_pool.remove(&2);
+        d.hexes[1].number = Slot::Fixed(8);
+        for _ in 0..100 {
+            let b = build(&d).unwrap();
+            assert_eq!(b.hexes[1].number, Some(8));
+            assert_eq!(sorted_numbers(&b), vec![3, 4, 8, 9, 10, 11]);
+        }
+        d.hexes[1].number = Slot::Fixed(5);
+        for _ in 0..100 {
+            let b = build(&d).unwrap();
+            let n = b.hexes[1].number.unwrap();
+            assert!(n == 6 || n == 8, "a 5 on a volcano became a {n}");
+            // the pool did not give anything up: the other five hexes hold exactly it
+            let mut others: Vec<u8> = b.hexes.iter().enumerate().filter(|&(i, _)| i != 1).filter_map(|(_, h)| h.number).collect();
+            others.sort();
+            assert_eq!(others, vec![3, 4, 9, 10, 11]);
+        }
+    }
+
+    #[test]
+    fn volcanoes_from_the_terrain_pool_land_on_a_6_or_8() {
+        for tokens in [[(3, 1), (6, 1), (8, 1), (9, 1), (10, 1), (11, 1)], [(3, 1), (4, 1), (5, 1), (9, 1), (10, 1), (11, 1)]] {
+            let mut d = flower();
+            d.terrain_pool = BTreeMap::from([(Terrain::Volcano, 2), (Terrain::Forest, 2), (Terrain::Hills, 2)]);
+            d.token_pool = BTreeMap::from(tokens);
+            for _ in 0..200 {
+                let b = build(&d).unwrap();
+                let volcanoes: Vec<Option<u8>> = b.hexes.iter().filter(|h| h.terrain == Terrain::Volcano).map(|h| h.number).collect();
+                assert_eq!(volcanoes.len(), 2);
+                assert!(volcanoes.iter().all(|&n| n == Some(6) || n == Some(8)), "{volcanoes:?}");
+                assert_eq!(b.hexes.iter().filter(|h| h.terrain == Terrain::Forest).count(), 2);
+                assert_eq!(b.hexes.iter().filter(|h| h.terrain == Terrain::Hills).count(), 2);
+                assert_tokens_spread(&b);
+            }
+        }
+    }
+
+    #[test]
+    fn a_volcano_from_the_terrain_pool_may_take_a_6_written_onto_a_hex() {
+        let mut d = flower();
+        d.hexes[1].number = Slot::Fixed(6);
+        d.terrain_pool = BTreeMap::from([(Terrain::Volcano, 1), (Terrain::Forest, 3), (Terrain::Hills, 2)]);
+        d.token_pool = BTreeMap::from([(3, 1), (4, 1), (5, 1), (9, 1), (10, 1)]);
+        for _ in 0..200 {
+            let b = build(&d).unwrap();
+            assert_eq!(b.hexes[1].number, Some(6));
+            let v: Vec<usize> = (0..b.hexes.len()).filter(|&i| b.hexes[i].terrain == Terrain::Volcano).collect();
+            assert_eq!(v.len(), 1);
+            assert!(is_hot(b.hexes[v[0]].number));
+        }
+    }
+
+    #[test]
+    fn volcanoes_that_must_touch_a_6_or_8_are_refused_unless_spreading_is_off() {
+        // two written-in volcanoes side by side (hexes 1 and 2 touch)
+        let mut d = volcano_flower([(3, 1), (4, 1), (5, 1), (9, 1), (10, 1), (11, 1)]);
+        d.hexes[2].terrain = Slot::Fixed(Terrain::Volcano);
+        d.terrain_pool = BTreeMap::from([(Terrain::Forest, 2), (Terrain::Hills, 2)]);
+        assert_eq!(err(&d), MapError::VolcanoTouchesHot { q: 1, r: 0 });
+        // a volcano beside a written-in 6
+        let mut d = volcano_flower([(3, 1), (4, 1), (5, 1), (9, 1), (10, 1), (11, 1)]);
+        d.hexes[2].number = Slot::Fixed(6);
+        d.token_pool = BTreeMap::from([(3, 1), (4, 1), (5, 1), (9, 1), (10, 1)]);
+        assert_eq!(err(&d), MapError::VolcanoTouchesHot { q: 1, r: 0 });
+        // a written-in 5 on a volcano beside a written-in 8
+        d.hexes[1].number = Slot::Fixed(5);
+        d.hexes[2].number = Slot::Fixed(8);
+        d.token_pool = BTreeMap::from([(3, 1), (4, 1), (9, 1), (10, 1)]);
+        assert_eq!(err(&d), MapError::VolcanoTouchesHot { q: 1, r: 0 });
+        // with spreading off, nothing stops them
+        d.constraints.spread_tokens = false;
+        let b = build(&d).unwrap();
+        assert!(is_hot(b.hexes[1].number) && b.hexes[2].number == Some(8));
+    }
+
+    #[test]
+    fn too_many_volcanoes_for_the_6_and_8_spots_are_refused() {
+        // at most 3 of the 6 ring hexes can be a 6 or 8 without two of them touching
+        let mut d = flower();
+        d.terrain_pool = BTreeMap::from([(Terrain::Volcano, 4), (Terrain::Forest, 2)]);
+        assert!(matches!(err(&d), MapError::NotEnoughVolcanoSpots { wanted: 4, available } if available <= 3));
+        d.terrain_pool = BTreeMap::from([(Terrain::Volcano, 3), (Terrain::Forest, 3)]);
+        for _ in 0..50 {
+            let b = build(&d).unwrap();
+            assert_tokens_spread(&b);
+            assert_eq!(b.hexes.iter().filter(|h| h.terrain == Terrain::Volcano).count(), 3);
+        }
+        d.terrain_pool = BTreeMap::from([(Terrain::Volcano, 4), (Terrain::Forest, 2)]);
+        d.constraints.spread_tokens = false;
+        assert!(build(&d).is_ok());
     }
 }

@@ -340,6 +340,11 @@ pub enum MapError {
     InvalidToken { value: u8, at: Option<(i32, i32)> },
     NumberOnDesert { q: i32, r: i32 },
     NotEnoughDesertSpots { wanted: usize, available: usize },
+    /// `terrain_pool` has more volcanoes than there are hexes that can hold the 6 or 8 a volcano needs.
+    NotEnoughVolcanoSpots { wanted: usize, available: usize },
+    /// A volcano is always a 6 or 8, but this one touches another hex that is (or must be) a 6 or 8, and
+    /// those may not touch (`constraints.spread_tokens`).
+    VolcanoTouchesHot { q: i32, r: i32 },
     FixedTokensClash { a: (i32, i32), b: (i32, i32) },
     TokenPlacementFailed { attempts: usize },
     PortHexMissing { q: i32, r: i32 },
@@ -381,6 +386,11 @@ impl fmt::Display for MapError {
             InvalidToken { value, at: None } => write!(f, "token_pool has number {value}, but tokens are 2 to 12 except 7"),
             NumberOnDesert { q, r } => write!(f, "hex ({q}, {r}) is a desert, so it cannot have a number"),
             NotEnoughDesertSpots { wanted, available } => write!(f, "terrain_pool has {wanted} deserts to place, but only {available} hexes can take one"),
+            NotEnoughVolcanoSpots { wanted, available } => write!(
+                f,
+                "terrain_pool has {wanted} volcanoes to place, but only {available} hexes can take one (a volcano is always a 6 or 8, and those may not touch)"
+            ),
+            VolcanoTouchesHot { q, r } => write!(f, "hex ({q}, {r}) is a volcano, so it is always a 6 or 8, but it touches another 6 or 8 (turn off spread_tokens to allow that)"),
             FixedTokensClash { a, b } => write!(f, "touching hexes ({}, {}) and ({}, {}) have fixed numbers that are not allowed to touch", a.0, a.1, b.0, b.1),
             TokenPlacementFailed { attempts } => write!(f, "could not spread the number tokens out after {attempts} attempts; the token pool may be impossible on this layout"),
             PortHexMissing { q, r } => write!(f, "a harbour is on hex ({q}, {r}), which is not part of the map"),

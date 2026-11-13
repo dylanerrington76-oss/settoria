@@ -1,7 +1,7 @@
 //! Rules engine for standard base-game 
 
 use crate::board::*;
-use crate::log_event::LogEvent;
+use crate::log_event::{LavaEffect, LogEvent};
 use crate::map_def::{MapDef, MapError, PlayerRange, MAX_PLAYERS, MIN_PLAYERS};
 use crate::types::{ByDev, ByResource, DevCard, DevHand, PerPlayer, PlayerId, Res, Resource};
 use rand::seq::SliceRandom;
@@ -222,6 +222,8 @@ pub const ROLL_SECS: u64 = 10;
 pub const DISCARD_SECS: u64 = 20;
 pub const ROBBER_SECS: u64 = 20;
 pub const STEAL_SECS: u64 = 15;
+/// Time a player has to pick a free resource from an erupting volcano (not counted against the turn clock).
+pub const VOLCANO_SECS: u64 = 15;
 /// Added to the turn clock (never above the mode's starting time) for each of:
 /// road, settlement, city, bank trade, completed player trade, development card bought.
 pub const BONUS_SECS: u64 = 10;
@@ -259,6 +261,8 @@ pub enum ClockKind {
     Discard,
     Robber,
     Steal,
+    /// Picking free resources from an erupting volcano (see `Phase::VolcanoPick`).
+    Volcano,
     /// The standard per-turn clock (building, trading, playing cards).
     Turn,
 }
@@ -312,6 +316,9 @@ pub enum Phase {
     Discard,
     MoveRobber,
     Steal,
+    /// A volcano's number was rolled: the players with a building on it pick their free resources, one
+    /// player at a time (see `Game::volcano_picks`), before the lava flows.
+    VolcanoPick,
     /// After rolling: build, trade, play cards, end turn.
     Main,
     /// Placing the free roads from a Road Building card.
@@ -377,6 +384,8 @@ pub enum Action {
     MoveRobber { hex: usize },
     Steal { victim: PlayerId },
     Discard { cards: Res },
+    /// One free resource from an erupting volcano, by the player whose pick it is.
+    VolcanoPick { resource: Resource },
     BankTrade { give: Resource, get: Resource },
     OfferTrade { give: Res, want: Res },
     RespondTrade { id: u32, accept: bool },
@@ -410,6 +419,19 @@ pub struct Game {
     pub setup_vertex: Option<usize>,
     pub discards: Vec<(PlayerId, u8)>,
     pub steal_candidates: Vec<PlayerId>,
+    /// Volcano hexes whose number was rolled and that have not erupted yet, in the order they erupt.
+    pub volcano_queue: Vec<usize>,
+    /// The volcano that is erupting now: its players are picking, then its lava flows.
+    pub volcano_active: Option<usize>,
+    /// Free picks still owed at the active volcano: `(player, cards)`. Only the first player picks; the
+    /// bank can never be asked for a card it doesn't have, because picks are made one at a time.
+    pub volcano_picks: Vec<(PlayerId, u8)>,
+    /// Settlements that were cities until lava hit them while their owner had no settlement piece left to
+    /// put in their place. The settlement stands anyway but is on loan: it holds no piece from the stock,
+    /// and its owner may build no other city until it is upgraded again (repaired).
+    pub damaged: Vec<usize>,
+    /// Where the last lava flow went, shown on the board until the next roll.
+    pub lava: Option<Lava>,
     pub road_building_left: u8,
     /// Player offers currently open. Only the player whose turn it is can have any.
     pub trades: Vec<Trade>,
@@ -429,6 +451,26 @@ pub struct Game {
     roll_left: Option<Duration>,
     /// Bonus earned by the action being applied; consumed by `apply_at`.
     bonus: Duration,
+}
+
+/// One lava flow: the volcano, the die that said where it ran, and the corner it ran down to.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+pub struct Lava {
+    pub hex: usize,
+    /// 1 to 6: the volcano's corners are numbered clockwise from the upper right (corner `i` of
+    /// `Hex::vertices` is `i + 1`).
+    pub die: u8,
+    pub vertex: usize,
+}
+
+/// What a volcano pick is waiting for.
+#[derive(Serialize)]
+pub struct VolcanoView {
+    pub hex: usize,
+    /// Whose pick it is.
+    pub player: PlayerId,
+    /// How many cards that player still picks (more than one for a city, or several buildings).
+    pub left: u8,
 }
 
 #[derive(Serialize, Default)]
@@ -500,6 +542,12 @@ pub struct GameView<'a> {
     pub setup_needs: Option<&'static str>,
     pub discards: &'a [(PlayerId, u8)],
     pub steal_candidates: &'a [PlayerId],
+    /// Set while players are picking free resources from an erupting volcano.
+    pub volcano: Option<VolcanoView>,
+    /// Where the last lava flow went (cleared by the next roll).
+    pub lava: Option<Lava>,
+    /// Corners holding a settlement that is on loan after lava hit a city (see `Game::damaged`).
+    pub damaged: &'a [usize],
     pub road_building_left: u8,
     pub trades: &'a [Trade],
     pub legal: Legal,
@@ -641,6 +689,11 @@ impl Game {
             setup_vertex: None,
             discards: vec![],
             steal_candidates: vec![],
+            volcano_queue: vec![],
+            volcano_active: None,
+            volcano_picks: vec![],
+            damaged: vec![],
+            lava: None,
             road_building_left: 0,
             trades: vec![],
             next_trade_id: 0,
@@ -821,9 +874,11 @@ impl Game {
                         .collect();
                 }
                 if pl.cities_left > 0 {
+                    let repairing = self.has_damaged(p);
                     l.cities = (0..self.buildings.len())
                         .filter(|&v| {
                             matches!(self.buildings[v], Some(b) if b.owner == p && !b.city)
+                                && (!repairing || self.damaged.contains(&v))
                         })
                         .collect();
                 }
@@ -835,6 +890,11 @@ impl Game {
             _ => {}
         }
         l
+    }
+
+    /// Whether `p` has a settlement on loan after lava hit one of their cities (see `Game::damaged`).
+    pub fn has_damaged(&self, p: PlayerId) -> bool {
+        self.damaged.iter().any(|&v| matches!(self.buildings[v], Some(b) if b.owner == p))
     }
 
     /// Hexes where `p` may put the robber. With Friendly Robber on, a hex is off limits
@@ -1046,6 +1106,7 @@ impl Game {
         }
         let res = match act {
             Action::Discard { cards } => self.do_discard(p, cards),
+            Action::VolcanoPick { resource } => self.do_volcano_pick(p, resource),
             Action::RespondTrade { id, accept } => self.do_respond_trade(p, id, accept),
             other => {
                 if p != self.current {
@@ -1082,7 +1143,7 @@ impl Game {
             Action::ConfirmTrade { id, with } => self.do_confirm_trade(p, id, with),
             Action::CancelTrade { id } => self.do_cancel_trade(id),
             Action::EndTurn => self.do_end_turn(),
-            Action::Discard { .. } | Action::RespondTrade { .. } => unreachable!(),
+            Action::Discard { .. } | Action::VolcanoPick { .. } | Action::RespondTrade { .. } => unreachable!(),
         }
     }
 
@@ -1107,6 +1168,7 @@ impl Game {
         let d = (rng.gen_range(1..=6u8), rng.gen_range(1..=6u8));
         let total = d.0 + d.1;
         self.dice = Some(d);
+        self.lava = None;
         self.roll_counts[usize::from(total) - 2] += 1;
         self.rolled = true;
         self.log(LogEvent::Rolled { player: self.current, dice: d });
@@ -1137,6 +1199,7 @@ impl Game {
         } else {
             self.distribute(total);
             self.phase = Phase::Main;
+            self.start_volcanoes(total);
         }
     }
 
@@ -1184,6 +1247,139 @@ impl Game {
                 self.log(LogEvent::Collected { player: p, cards: received[p] });
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Volcanoes
+    // ------------------------------------------------------------------
+
+    /// A non-7 was rolled: every volcano carrying that number erupts, one after the other. For each, the
+    /// players with a building on it pick their free resources, and then the lava flows. If no volcano
+    /// has the number nothing happens and the phase stays `Main`.
+    fn start_volcanoes(&mut self, roll: u8) {
+        self.volcano_queue = (0..self.board.hexes.len())
+            .filter(|&h| self.board.hexes[h].terrain.is_volcano() && self.board.hexes[h].number == Some(roll))
+            .collect();
+        self.volcano_active = None;
+        self.volcano_picks.clear();
+        self.advance_volcano();
+    }
+
+    /// Free picks a volcano owes: a settlement on it is one card, a city two, in turn order from the player
+    /// whose turn it is. Nothing is owed while the robber sits on it (he stops production, not eruptions).
+    fn volcano_owed(&self, hex: usize) -> Vec<(PlayerId, u8)> {
+        if hex == self.robber {
+            return vec![];
+        }
+        let start = self.order.iter().position(|&x| x == self.current).unwrap_or(0);
+        (0..self.n)
+            .map(|i| self.order[(start + i) % self.n])
+            .filter_map(|p| {
+                let cards: u8 = self.board.hexes[hex]
+                    .vertices
+                    .iter()
+                    .filter_map(|&v| self.buildings[v])
+                    .filter(|b| b.owner == p)
+                    .map(|b| if b.city { 2 } else { 1 })
+                    .sum();
+                (cards > 0).then_some((p, cards))
+            })
+            .collect()
+    }
+
+    /// Move the eruption along: wait for the next pick, or let the active volcano's lava flow and start the
+    /// next volcano, or go back to `Main` when there are no more.
+    fn advance_volcano(&mut self) {
+        loop {
+            if !self.volcano_picks.is_empty() && self.bank.total() == 0 {
+                self.volcano_picks.clear();
+                self.log(LogEvent::VolcanoBankEmpty);
+            }
+            if !self.volcano_picks.is_empty() {
+                self.phase = Phase::VolcanoPick;
+                return;
+            }
+            if let Some(hex) = self.volcano_active.take() {
+                self.erupt(hex);
+            }
+            if self.volcano_queue.is_empty() {
+                // A volcano only erupts straight after a roll, so what comes next is the player's turn.
+                self.phase = Phase::Main;
+                return;
+            }
+            let hex = self.volcano_queue.remove(0);
+            self.volcano_active = Some(hex);
+            self.volcano_picks = self.volcano_owed(hex);
+            if hex == self.robber {
+                self.log(LogEvent::VolcanoBlocked { hex });
+            }
+        }
+    }
+
+    fn do_volcano_pick(&mut self, p: PlayerId, r: Resource) -> Result<(), String> {
+        if self.phase != Phase::VolcanoPick {
+            return Err("There is no volcano to take a resource from right now".into());
+        }
+        match self.volcano_picks.first() {
+            Some(&(q, _)) if q == p => {}
+            Some(_) => return Err("It's not your pick".into()),
+            None => return Err("There is nothing to pick".into()),
+        }
+        if self.bank[r] == 0 {
+            return Err(format!("The bank has no {} left", r.name()));
+        }
+        self.bank[r] -= 1;
+        self.players[p].hand[r] += 1;
+        self.volcano_picks[0].1 -= 1;
+        if self.volcano_picks[0].1 == 0 {
+            self.volcano_picks.remove(0);
+        }
+        self.log(LogEvent::VolcanoPicked { player: p, resource: r });
+        self.advance_volcano();
+        Ok(())
+    }
+
+    /// Lava flows from `hex`: a die says which of the volcano's six corners it runs down (they are numbered
+    /// 1 to 6, clockwise from the upper right). A settlement there is destroyed and goes back to its owner's
+    /// stock; a city is reduced to a settlement. If the owner has no settlement piece to put in the city's
+    /// place, the settlement is built anyway but is on loan (see `Game::damaged`).
+    fn erupt(&mut self, hex: usize) {
+        let die: u8 = rand::thread_rng().gen_range(1..=6);
+        self.erupt_with(hex, die);
+    }
+
+    fn erupt_with(&mut self, hex: usize, die: u8) {
+        let vertex = self.board.hexes[hex].vertices[usize::from(die) - 1];
+        self.lava = Some(Lava { hex, die, vertex });
+        let (effect, owner) = match self.buildings[vertex] {
+            None => (LavaEffect::Nothing, None),
+            Some(Building { owner, city: false }) => {
+                self.buildings[vertex] = None;
+                if let Some(i) = self.damaged.iter().position(|&d| d == vertex) {
+                    // On loan: there was no piece from the stock to give back.
+                    self.damaged.remove(i);
+                } else if let Some(i) = self.damaged.iter().position(|&d| matches!(self.buildings[d], Some(b) if b.owner == owner)) {
+                    // The piece that comes home pays back one of this player's loans instead of the stock.
+                    self.damaged.remove(i);
+                } else {
+                    self.players[owner].settlements_left += 1;
+                }
+                (LavaEffect::Destroyed, Some(owner))
+            }
+            Some(Building { owner, city: true }) => {
+                self.buildings[vertex] = Some(Building { owner, city: false });
+                self.players[owner].cities_left += 1;
+                if self.players[owner].settlements_left > 0 {
+                    self.players[owner].settlements_left -= 1;
+                } else {
+                    self.damaged.push(vertex);
+                }
+                (LavaEffect::Demoted, Some(owner))
+            }
+        };
+        self.log(LogEvent::LavaFlow { hex, die, effect, owner });
+        // A destroyed settlement no longer blocks the roads that ran past it.
+        self.update_longest_road();
     }
 
     fn do_discard(&mut self, p: PlayerId, cards: Res) -> Result<(), String> {
@@ -1441,10 +1637,20 @@ impl Game {
             Some(b) if b.owner == p && !b.city => {}
             _ => return Err("A city must replace one of your settlements".into()),
         }
+        let repairing = self.damaged.iter().position(|&d| d == v);
+        if repairing.is_none() && self.has_damaged(p) {
+            return Err("Lava damaged one of your cities: repair that settlement before building another city".into());
+        }
         self.pay(p, &COST_CITY);
         self.buildings[v] = Some(Building { owner: p, city: true });
         self.players[p].cities_left -= 1;
-        self.players[p].settlements_left += 1;
+        match repairing {
+            // A settlement on loan holds no piece, so there is none to give back.
+            Some(i) => {
+                self.damaged.remove(i);
+            }
+            None => self.players[p].settlements_left += 1,
+        }
         self.log(LogEvent::BuiltCity { player: p });
         self.bonus += Duration::from_secs(BONUS_SECS);
         Ok(())
@@ -1708,8 +1914,18 @@ impl Game {
             Phase::Discard => Some(ClockKind::Discard),
             Phase::MoveRobber => Some(ClockKind::Robber),
             Phase::Steal => Some(ClockKind::Steal),
+            Phase::VolcanoPick => Some(ClockKind::Volcano),
             Phase::Main | Phase::RoadBuilding => Some(ClockKind::Turn),
             Phase::GameOver => None,
+        }
+    }
+
+    /// Whose action the clock waits for: the player whose turn it is, except while a volcano is waiting
+    /// for one particular player's pick.
+    fn clock_player(&self) -> PlayerId {
+        match (self.phase, self.volcano_picks.first()) {
+            (Phase::VolcanoPick, Some(&(p, _))) => p,
+            _ => self.current,
         }
     }
 
@@ -1721,6 +1937,7 @@ impl Game {
             ClockKind::Discard => DISCARD_SECS,
             ClockKind::Robber => ROBBER_SECS,
             ClockKind::Steal => STEAL_SECS,
+            ClockKind::Volcano => VOLCANO_SECS,
             ClockKind::Turn => self.timer_mode.secs(),
         })
     }
@@ -1729,7 +1946,7 @@ impl Game {
     /// state change. Only the turn clock and the roll clock are paused and resumed
     /// (around a Knight); every other countdown starts fresh when its phase begins.
     fn sync_clock(&mut self, now: Instant) {
-        let want = self.clock_kind().map(|k| (self.current, k));
+        let want = self.clock_kind().map(|k| (self.clock_player(), k));
         let have = self.clock.map(|c| (c.player, c.kind));
         if want == have {
             return;
@@ -1827,6 +2044,16 @@ impl Game {
                     let _ = self.do_move_robber(p, h);
                 }
             }
+            ClockKind::Volcano => {
+                // Every pick this player still owes is made at random from what the bank has.
+                while self.phase == Phase::VolcanoPick && matches!(self.volcano_picks.first(), Some(&(q, _)) if q == p) {
+                    let open: Vec<Resource> = Resource::ALL.iter().copied().filter(|&r| self.bank[r] > 0).collect();
+                    let Some(&r) = open.choose(&mut rng) else { break };
+                    if self.do_volcano_pick(p, r).is_err() {
+                        break;
+                    }
+                }
+            }
             ClockKind::Steal => {
                 if let Some(&victim) = self.steal_candidates.clone().choose(&mut rng) {
                     let _ = self.do_steal(victim);
@@ -1917,6 +2144,12 @@ impl Game {
             },
             discards: &self.discards,
             steal_candidates: &self.steal_candidates,
+            volcano: match (self.phase, self.volcano_active, self.volcano_picks.first()) {
+                (Phase::VolcanoPick, Some(hex), Some(&(player, left))) => Some(VolcanoView { hex, player, left }),
+                _ => None,
+            },
+            lava: self.lava,
+            damaged: &self.damaged,
             road_building_left: self.road_building_left,
             trades: &self.trades,
             legal: self.legal(you),
@@ -1939,6 +2172,7 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::map_def::Slot;
 
     const P0: PlayerId = PlayerId::new(0);
     const P1: PlayerId = PlayerId::new(1);
@@ -2167,8 +2401,19 @@ mod tests {
             assert_eq!(roads + g.players[p].roads_left, g.settings.max_roads);
             let s = g.buildings.iter().flatten().filter(|b| b.owner == p && !b.city).count() as u8;
             let c = g.buildings.iter().flatten().filter(|b| b.owner == p && b.city).count() as u8;
-            assert_eq!(s + g.players[p].settlements_left, g.settings.max_settlements);
+            // A settlement on loan (lava hit a city and no piece was left) holds no piece from the stock.
+            let loans = g.damaged.iter().filter(|&&v| matches!(g.buildings[v], Some(b) if b.owner == p)).count() as u8;
+            assert_eq!(s + g.players[p].settlements_left, g.settings.max_settlements + loans);
             assert_eq!(c + g.players[p].cities_left, g.settings.max_cities);
+        }
+        for &v in &g.damaged {
+            assert!(matches!(g.buildings[v], Some(b) if !b.city), "a loan must be a settlement");
+        }
+        // A volcano only waits while its phase lasts.
+        if g.phase == Phase::VolcanoPick {
+            assert!(g.volcano_active.is_some() && !g.volcano_picks.is_empty());
+        } else if g.phase != Phase::GameOver {
+            assert!(g.volcano_queue.is_empty() && g.volcano_active.is_none() && g.volcano_picks.is_empty());
         }
         // Open offers: only during the current player's main phase, always payable by the
         // proposer, never more than the cap, ids unique, accepters always able to pay.
@@ -2245,6 +2490,11 @@ mod tests {
                     let l = g.legal(p);
                     g.apply(p, Action::MoveRobber { hex: pick(&l.hexes, rng).unwrap() })
                         .unwrap();
+                }
+                Phase::VolcanoPick => {
+                    let (q, _) = g.volcano_picks[0];
+                    let open: Vec<Resource> = Resource::ALL.iter().copied().filter(|&r| g.bank[r] > 0).collect();
+                    g.apply(q, Action::VolcanoPick { resource: pick(&open, rng).unwrap() }).unwrap();
                 }
                 Phase::Steal => {
                     let v = pick(&g.steal_candidates.clone(), rng).unwrap();
@@ -3692,5 +3942,426 @@ mod tests {
             }
         }
         assert!(finished > 10, "only {finished} of 80 random-rule games finished");
+    }
+
+    // ------------------------------------------------------------------
+    // Volcanoes
+    // ------------------------------------------------------------------
+
+    /// Seven hexes with a volcano numbered 8 in the middle; the robber starts on a rim hex.
+    fn volcano_def() -> MapDef {
+        let mut def = crate::builtin::flower();
+        def.hexes[0].terrain = Slot::Fixed(Terrain::Volcano);
+        def.hexes[0].number = Slot::Fixed(8);
+        def.robber_start = Some(crate::map_def::HexRef { q: 1, r: 0 });
+        def
+    }
+
+    /// A game on `volcano_def` with `n` seats, at the start of P0's turn, and the volcano's hex (always 0).
+    fn volcano_game(n: usize) -> Game {
+        let colors = PALETTE.iter().take(n).map(|c| c.to_string()).collect();
+        let mut g = Game::try_with_def(names(n), colors, TimerMode::Normal, Settings::default(), "volcano", &volcano_def()).unwrap();
+        assert_eq!(g.board.hexes[0].terrain, Terrain::Volcano);
+        // skip setup: P0 is to roll
+        g.phase = Phase::Roll;
+        g.current = P0;
+        g.rolled = false;
+        g.sync_clock(Instant::now());
+        g
+    }
+
+    /// Put a building on corner `i` (0 to 5) of hex 0, taking the piece from the owner's stock.
+    fn build_on_volcano(g: &mut Game, corner: usize, p: PlayerId, city: bool) -> usize {
+        let v = g.board.hexes[0].vertices[corner];
+        g.buildings[v] = Some(Building { owner: p, city });
+        if city {
+            g.players[p].cities_left -= 1;
+        } else {
+            g.players[p].settlements_left -= 1;
+        }
+        v
+    }
+
+    #[test]
+    fn a_volcano_is_a_numbered_hex_that_produces_nothing_by_itself() {
+        let def = volcano_def();
+        let report = crate::validate::validate(&def, &Settings::default());
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        let json = serde_json::to_string(&Terrain::Volcano).unwrap();
+        assert_eq!(json, "\"volcano\"");
+        assert_eq!(Terrain::Volcano.resource(), None);
+        // a volcano dealt from the pool gets a number token like any producing hex
+        let mut pooled = crate::builtin::flower();
+        pooled.hexes[0].terrain = Slot::Random;
+        pooled.terrain_pool = std::collections::BTreeMap::from([(Terrain::Volcano, 1), (Terrain::Forest, 3), (Terrain::Hills, 2), (Terrain::Fields, 1)]);
+        pooled.robber_start = Some(crate::map_def::HexRef { q: 1, r: 0 });
+        pooled.token_pool = std::collections::BTreeMap::from([(3, 1), (4, 1), (5, 1), (9, 1), (10, 1), (11, 1), (2, 1)]);
+        let report = crate::validate::validate(&pooled, &Settings::default());
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        for _ in 0..20 {
+            let b = Board::from_def(&pooled, "pooled", &mut rand::thread_rng()).unwrap();
+            let v = b.hexes.iter().find(|h| h.terrain == Terrain::Volcano).expect("one volcano is dealt");
+            assert!(v.number.is_some());
+        }
+    }
+
+    #[test]
+    fn a_volcano_roll_gives_every_building_its_free_picks_one_player_at_a_time_then_the_lava_flows() {
+        let mut g = volcano_game(3);
+        build_on_volcano(&mut g, 0, P0, false); // 1 card
+        build_on_volcano(&mut g, 2, P1, true); // 2 cards
+        build_on_volcano(&mut g, 4, P0, true); // 2 more for P0: 3 in all
+        let start_bank = g.bank;
+        g.resolve_roll(8);
+        assert_eq!(g.phase, Phase::VolcanoPick);
+        // in turn order from the player who rolled
+        let first = g.order.iter().position(|&x| x == P0).unwrap();
+        let expected: Vec<(PlayerId, u8)> = (0..3)
+            .map(|i| g.order[(first + i) % 3])
+            .filter_map(|p| match p {
+                x if x == P0 => Some((P0, 3)),
+                x if x == P1 => Some((P1, 2)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(g.volcano_picks, expected);
+        assert!(g.lava.is_none(), "the lava waits for the picks");
+
+        // nobody else may pick, and the bank must have the card
+        let (first_p, _) = g.volcano_picks[0];
+        let other = if first_p == P0 { P1 } else { P0 };
+        assert!(g.apply(other, Action::VolcanoPick { resource: Resource::Ore }).is_err());
+        assert!(g.apply(P2, Action::VolcanoPick { resource: Resource::Ore }).is_err());
+        g.bank[Resource::Wool] = 0;
+        assert!(g.apply(first_p, Action::VolcanoPick { resource: Resource::Wool }).is_err());
+        g.bank[Resource::Wool] = start_bank[Resource::Wool];
+        // a player can't act in the volcano's turn either
+        assert!(g.apply(P0, Action::EndTurn).is_err());
+
+        // everyone picks what they like, two of the same or two different
+        while g.phase == Phase::VolcanoPick {
+            let (q, left) = g.volcano_picks[0];
+            let r = if left == 2 { Resource::Ore } else { Resource::Grain };
+            g.apply(q, Action::VolcanoPick { resource: r }).unwrap();
+            invariants(&g);
+        }
+        assert_eq!(g.players[P0].hand.total(), 3);
+        assert_eq!(g.players[P1].hand.total(), 2);
+        assert_eq!(g.players[P2].hand.total(), 0);
+        assert_eq!(g.phase, Phase::Main);
+        let lava = g.lava.expect("the lava flowed after the last pick");
+        assert!((1..=6).contains(&lava.die));
+        assert_eq!(lava.vertex, g.board.hexes[0].vertices[usize::from(lava.die) - 1]);
+        assert_eq!(g.volcano_active, None);
+        invariants(&g);
+    }
+
+    #[test]
+    fn a_roll_of_another_number_or_a_seven_leaves_the_volcano_quiet() {
+        let mut g = volcano_game(2);
+        build_on_volcano(&mut g, 0, P0, false);
+        g.resolve_roll(9);
+        assert_eq!(g.phase, Phase::Main);
+        assert!(g.lava.is_none() && g.volcano_picks.is_empty());
+        let mut g = volcano_game(2);
+        build_on_volcano(&mut g, 0, P0, false);
+        g.resolve_roll(7);
+        assert!(g.lava.is_none() && g.volcano_picks.is_empty());
+        assert_ne!(g.phase, Phase::VolcanoPick);
+    }
+
+    #[test]
+    fn nobody_picks_when_nobody_is_on_the_volcano_but_the_lava_still_flows() {
+        let mut g = volcano_game(2);
+        g.resolve_roll(8);
+        assert_eq!(g.phase, Phase::Main);
+        assert!(g.lava.is_some());
+        assert!(g.log.iter().any(|e| matches!(e, LogEvent::LavaFlow { effect: LavaEffect::Nothing, owner: None, .. })));
+    }
+
+    #[test]
+    fn the_robber_on_a_volcano_stops_the_free_resources_but_not_the_eruption() {
+        let mut demoted = 0;
+        for _ in 0..120 {
+            let mut g = volcano_game(2);
+            let v = build_on_volcano(&mut g, 0, P0, true);
+            g.robber = 0;
+            g.resolve_roll(8);
+            assert_eq!(g.phase, Phase::Main, "no picks while the robber sits on the volcano");
+            assert_eq!(g.players[P0].hand.total(), 0);
+            assert!(g.log.iter().any(|e| matches!(e, LogEvent::VolcanoBlocked { hex: 0 })));
+            let lava = g.lava.expect("it still erupts");
+            if lava.vertex == v {
+                assert_eq!(g.buildings[v], Some(Building { owner: P0, city: false }));
+                demoted += 1;
+            } else {
+                assert_eq!(g.buildings[v], Some(Building { owner: P0, city: true }));
+            }
+        }
+        assert!(demoted > 0, "the lava should have hit corner 1 at least once in 120 tries");
+    }
+
+    #[test]
+    fn lava_destroys_a_settlement_and_returns_it_to_the_stock() {
+        for die in 1..=6u8 {
+            let mut g = volcano_game(2);
+            for c in 0..6 {
+                if c % 2 == 0 {
+                    // settlements on alternate corners, so the distance rule is respected
+                    build_on_volcano(&mut g, c, P1, false);
+                }
+            }
+            let hit = usize::from(die) - 1;
+            let before = g.players[P1].settlements_left;
+            g.erupt_with(0, die);
+            let v = g.board.hexes[0].vertices[hit];
+            if hit % 2 == 0 {
+                assert_eq!(g.buildings[v], None, "die {die}");
+                assert_eq!(g.players[P1].settlements_left, before + 1);
+                assert!(g.log.iter().any(|e| matches!(e, LogEvent::LavaFlow { effect: LavaEffect::Destroyed, owner: Some(o), .. } if *o == P1)));
+            } else {
+                assert_eq!(g.buildings[v], None);
+                assert_eq!(g.players[P1].settlements_left, before);
+            }
+            invariants(&g);
+        }
+    }
+
+    #[test]
+    fn lava_reduces_a_city_to_a_settlement() {
+        let mut g = volcano_game(2);
+        let v = build_on_volcano(&mut g, 2, P0, true);
+        let (settlements, cities) = (g.players[P0].settlements_left, g.players[P0].cities_left);
+        g.erupt_with(0, 3);
+        assert_eq!(g.buildings[v], Some(Building { owner: P0, city: false }));
+        assert_eq!(g.players[P0].settlements_left, settlements - 1);
+        assert_eq!(g.players[P0].cities_left, cities + 1);
+        assert!(g.damaged.is_empty(), "there was a settlement piece to use");
+        assert_eq!(g.vp_public(P0), g.settings.settlement_points as usize);
+        assert!(g.log.iter().any(|e| matches!(e, LogEvent::LavaFlow { effect: LavaEffect::Demoted, die: 3, .. })));
+        invariants(&g);
+    }
+
+    #[test]
+    fn a_city_is_still_reduced_when_the_owner_has_all_their_settlements_out_and_must_be_repaired_first() {
+        let mut g = volcano_game(2);
+        let city = build_on_volcano(&mut g, 2, P0, true);
+        // P0 has every other settlement piece on the board too
+        let elsewhere: Vec<usize> = (0..g.buildings.len())
+            .filter(|&v| g.buildings[v].is_none() && g.board.vertices[v].hexes.iter().all(|&h| h != 0))
+            .collect();
+        let mut placed = vec![];
+        for v in elsewhere {
+            if g.players[P0].settlements_left == 0 {
+                break;
+            }
+            if g.settlement_free(v) {
+                g.buildings[v] = Some(Building { owner: P0, city: false });
+                g.players[P0].settlements_left -= 1;
+                placed.push(v);
+            }
+        }
+        assert_eq!(g.players[P0].settlements_left, 0, "the test board has room for them all");
+        g.erupt_with(0, 3);
+        assert_eq!(g.buildings[city], Some(Building { owner: P0, city: false }), "demoted all the same");
+        assert_eq!(g.damaged, vec![city]);
+        assert_eq!(g.players[P0].settlements_left, 0, "the loan takes nothing from the stock");
+        assert!(g.has_damaged(P0));
+        invariants(&g);
+
+        // only the damaged settlement may become a city, and it needs the usual price
+        into_main(&mut g, P0, Instant::now());
+        deal(&mut g, P0, Res::new(0, 0, 6, 4, 0));
+        assert_eq!(g.legal(P0).cities, vec![city]);
+        let other = placed[0];
+        assert!(g.apply(P0, Action::BuildCity { vertex: other }).is_err(), "repair first");
+        g.apply(P0, Action::BuildCity { vertex: city }).unwrap();
+        assert!(g.damaged.is_empty());
+        assert_eq!(g.players[P0].settlements_left, 0, "a repair gives no settlement piece back");
+        invariants(&g);
+        // repaired: the other settlements may be upgraded again
+        assert!(g.legal(P0).cities.contains(&other));
+        g.apply(P0, Action::BuildCity { vertex: other }).unwrap();
+        assert_eq!(g.players[P0].settlements_left, 1);
+        invariants(&g);
+    }
+
+    #[test]
+    fn lava_that_destroys_a_settlement_on_loan_gives_no_piece_back_and_a_loan_is_paid_off_by_a_returned_piece() {
+        // a loan destroyed
+        let mut g = volcano_game(2);
+        let v = build_on_volcano(&mut g, 2, P0, true);
+        g.players[P0].settlements_left = 0;
+        g.erupt_with(0, 3);
+        assert_eq!(g.damaged, vec![v]);
+        g.erupt_with(0, 3);
+        assert_eq!(g.buildings[v], None);
+        assert!(g.damaged.is_empty());
+        assert_eq!(g.players[P0].settlements_left, 0);
+
+        // a loan, then a different settlement destroyed: the returning piece pays the loan
+        let mut g = volcano_game(2);
+        let loan = build_on_volcano(&mut g, 2, P0, true);
+        build_on_volcano(&mut g, 4, P0, false);
+        g.players[P0].settlements_left = 0;
+        g.erupt_with(0, 3);
+        assert_eq!(g.damaged, vec![loan]);
+        g.erupt_with(0, 5);
+        assert!(g.damaged.is_empty(), "the loan is paid off");
+        assert_eq!(g.players[P0].settlements_left, 0);
+        assert_eq!(g.buildings[loan], Some(Building { owner: P0, city: false }));
+    }
+
+    #[test]
+    fn destroying_a_settlement_can_free_a_longest_road() {
+        let mut g = volcano_game(2);
+        let v = build_on_volcano(&mut g, 0, P1, false);
+        // P0 roads on both sides of P1's settlement are cut by it
+        let edges: Vec<usize> = g.board.vertices[v].edges.clone();
+        assert!(edges.len() >= 2);
+        g.roads[edges[0]] = Some(P0);
+        g.roads[edges[1]] = Some(P0);
+        g.players[P0].roads_left -= 2;
+        assert_eq!(g.longest_road(P0), 1);
+        g.erupt_with(0, 1);
+        assert_eq!(g.buildings[v], None);
+        assert_eq!(g.longest_road(P0), 2, "nothing blocks the road any more");
+    }
+
+    #[test]
+    fn a_player_who_runs_out_of_time_gets_random_picks_and_the_next_player_gets_a_fresh_clock() {
+        let mut g = volcano_game(3);
+        build_on_volcano(&mut g, 0, P0, true);
+        build_on_volcano(&mut g, 2, P1, false);
+        let t0 = Instant::now();
+        g.sync_clock(t0);
+        g.resolve_roll(8);
+        g.sync_clock(t0);
+        assert_eq!(g.phase, Phase::VolcanoPick);
+        let (first, _) = g.volcano_picks[0];
+        let timer = g.clock.expect("a clock is running");
+        assert_eq!((timer.kind, timer.player), (ClockKind::Volcano, first));
+        assert_eq!(timer.total, Duration::from_secs(VOLCANO_SECS));
+        assert!(!g.tick(t0 + secs(VOLCANO_SECS - 1)));
+        assert!(g.tick(t0 + secs(VOLCANO_SECS + 1)));
+        // that player's picks were all made; the other player is up (or the lava has flowed)
+        assert!(g.players[first].hand.total() > 0);
+        assert!(g.log.iter().any(|e| matches!(e, LogEvent::TimedOut { kind: ClockKind::Volcano, player } if *player == first)));
+        if g.phase == Phase::VolcanoPick {
+            let (second, _) = g.volcano_picks[0];
+            assert_ne!(second, first);
+            assert_eq!(g.clock.unwrap().player, second);
+            assert!(g.clock.unwrap().deadline > t0 + secs(VOLCANO_SECS));
+        }
+        invariants(&g);
+    }
+
+    #[test]
+    fn a_bank_that_runs_dry_drops_the_picks_still_owed() {
+        let mut g = volcano_game(2);
+        build_on_volcano(&mut g, 0, P0, true);
+        build_on_volcano(&mut g, 2, P1, true);
+        // the bank holds exactly one card
+        for r in Resource::ALL {
+            g.players[P1].hand[r] = g.bank[r];
+            g.bank[r] = 0;
+        }
+        g.players[P1].hand[Resource::Ore] -= 1;
+        g.bank[Resource::Ore] = 1;
+        g.resolve_roll(8);
+        assert_eq!(g.phase, Phase::VolcanoPick);
+        let (q, _) = g.volcano_picks[0];
+        assert!(g.apply(q, Action::VolcanoPick { resource: Resource::Grain }).is_err());
+        g.apply(q, Action::VolcanoPick { resource: Resource::Ore }).unwrap();
+        assert_eq!(g.phase, Phase::Main, "no cards left for anyone else's picks");
+        assert!(g.log.iter().any(|e| matches!(e, LogEvent::VolcanoBankEmpty)));
+        assert!(g.lava.is_some());
+        invariants(&g);
+    }
+
+    #[test]
+    fn two_volcanoes_with_the_same_number_erupt_one_after_the_other() {
+        let mut def = volcano_def();
+        // another volcano on the rim, also numbered 8 (spread_tokens only matters for dealt numbers)
+        def.hexes[1].terrain = Slot::Fixed(Terrain::Volcano);
+        def.hexes[1].number = Slot::Fixed(8);
+        def.constraints.spread_tokens = false;
+        def.terrain_pool = std::collections::BTreeMap::from([(Terrain::Forest, 2), (Terrain::Hills, 2), (Terrain::Fields, 1)]);
+        def.token_pool = std::collections::BTreeMap::from([(3, 1), (4, 1), (5, 1), (9, 1), (10, 1)]);
+        let colors = PALETTE.iter().take(2).map(|c| c.to_string()).collect();
+        let mut g = Game::try_with_def(names(2), colors, TimerMode::Normal, Settings::default(), "two", &def).unwrap();
+        g.phase = Phase::Roll;
+        g.current = P0;
+        g.robber = 2;
+        g.sync_clock(Instant::now());
+        let volcanoes: Vec<usize> = (0..g.board.hexes.len()).filter(|&h| g.board.hexes[h].terrain == Terrain::Volcano).collect();
+        assert_eq!(volcanoes.len(), 2);
+        // a settlement on a corner of each
+        // (a corner of the middle volcano that the second one doesn't touch, and one only the second touches)
+        let a = *g.board.hexes[volcanoes[0]].vertices.iter().find(|&&v| !g.board.hexes[volcanoes[1]].vertices.contains(&v)).unwrap();
+        let b = *g.board.hexes[volcanoes[1]].vertices.iter().find(|&&v| g.board.vertices[v].hexes.len() == 1).unwrap();
+        g.buildings[a] = Some(Building { owner: P0, city: false });
+        g.buildings[b] = Some(Building { owner: P1, city: false });
+        g.players[P0].settlements_left -= 1;
+        g.players[P1].settlements_left -= 1;
+        g.resolve_roll(8);
+        assert_eq!(g.phase, Phase::VolcanoPick);
+        assert_eq!(g.volcano_active, Some(volcanoes[0]));
+        assert_eq!(g.volcano_picks, vec![(P0, 1)]);
+        g.apply(P0, Action::VolcanoPick { resource: Resource::Brick }).unwrap();
+        // the first volcano has erupted and the second one now waits for its players
+        assert!(matches!(g.lava, Some(l) if l.hex == volcanoes[0]) || g.volcano_active == Some(volcanoes[1]));
+        assert_eq!(g.phase, Phase::VolcanoPick);
+        assert_eq!(g.volcano_active, Some(volcanoes[1]));
+        assert_eq!(g.volcano_picks, vec![(P1, 1)]);
+        g.apply(P1, Action::VolcanoPick { resource: Resource::Wool }).unwrap();
+        assert_eq!(g.phase, Phase::Main);
+        assert!(matches!(g.lava, Some(l) if l.hex == volcanoes[1]));
+        invariants(&g);
+    }
+
+    #[test]
+    fn volcano_views_and_actions_have_a_wire_format() {
+        let mut g = volcano_game(2);
+        build_on_volcano(&mut g, 0, P0, false);
+        g.resolve_roll(8);
+        g.sync_clock(Instant::now());
+        let conn = all_connected(2);
+        let lens = g.longest_roads();
+        let v = serde_json::to_value(g.view(P0, &conn, &lens)).unwrap();
+        assert_eq!(v["phase"], "volcano_pick");
+        assert_eq!(v["volcano"], serde_json::json!({ "hex": 0, "player": 0, "left": 1 }));
+        assert_eq!(v["timer"]["kind"], "volcano");
+        assert_eq!(v["lava"], serde_json::Value::Null);
+        assert_eq!(v["damaged"], serde_json::json!([]));
+        let a: Action = serde_json::from_str(r#"{"type":"volcano_pick","resource":2}"#).unwrap();
+        assert!(matches!(a, Action::VolcanoPick { resource: Resource::Ore }));
+        g.apply(P0, a).unwrap();
+        let v = serde_json::to_value(g.view(P0, &conn, &lens)).unwrap();
+        assert_eq!(v["phase"], "main");
+        assert!(v["volcano"].is_null());
+        assert_eq!(v["lava"]["hex"], 0);
+        assert_eq!(v["board"]["hexes"][0]["terrain"], "volcano");
+    }
+
+    #[test]
+    fn random_games_on_a_volcano_map_keep_invariants() {
+        let mut rng = rand::thread_rng();
+        let mut erupted = 0;
+        for game_no in 0..60 {
+            let n = 2 + game_no % 2;
+            let mut def = volcano_def();
+            def.hexes[0].number = Slot::Fixed(if game_no % 2 == 0 { 6 } else { 5 });
+            def.token_pool = std::collections::BTreeMap::from([(2, 1), (3, 1), (4, 1), (9, 1), (10, 1), (11, 1)]);
+            let colors = PALETTE.iter().take(n).map(|c| c.to_string()).collect();
+            let s = Settings { starting_settlements: 1, ..Settings::default() };
+            let mut g = Game::try_with_def(names(n), colors, TimerMode::VeryFast, s, "volcano", &def).unwrap();
+            play_random(&mut g, &mut rng);
+            invariants(&g);
+            if g.log.iter().any(|e| matches!(e, LogEvent::LavaFlow { .. })) {
+                erupted += 1;
+            }
+        }
+        assert!(erupted > 30, "only {erupted} of 60 games saw an eruption");
     }
 }

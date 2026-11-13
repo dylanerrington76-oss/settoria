@@ -33,7 +33,7 @@ writeFileSync(file, code);
 const { createElement } = await import('react');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const ui = await import(pathToFileURL(file).href);
-const { Lobby, Board, Log, settingsDifferences, DEFAULT_SETTINGS, fixture } = ui;
+const { Lobby, GameScreen, Board, Log, settingsDifferences, DEFAULT_SETTINGS, fixture } = ui;
 
 globalThis.location = { host: 'localhost:3000', search: '' }; // the lobby tells friends where to join
 
@@ -236,4 +236,75 @@ test('the log says which map the game is on, by the name the server sends', () =
   const text = (event) => renderToStaticMarkup(createElement(Log, { lines: [event], v: view })).replace(/<[^>]*>/g, '');
   assert.match(text({ type: 'map_chosen', map: 'earth', name: 'Earth' }), /Map: Earth/);
   assert.match(text({ type: 'map_chosen', map: 'user:arch', name: 'Archipelago' }), /Map: Archipelago/);
+});
+
+// ---------------------------------------------------------------- volcanoes
+
+/** The mid-game fixture with its first hex turned into a volcano numbered 8, and a volcano pick under way. */
+function volcanoView(over = {}) {
+  const v = fixture('main').view;
+  const hexes = v.board.hexes.map((h, i) => (i === 0 ? { ...h, terrain: 'volcano', number: 8 } : h));
+  return {
+    ...v,
+    board: { ...v.board, hexes },
+    phase: 'volcano_pick',
+    volcano: { hex: 0, player: v.you, left: 2 },
+    timer: { kind: 'volcano', player: v.you, remaining_ms: 12_000, total_ms: 15_000 },
+    ...over,
+  };
+}
+const drawBoard = (view) =>
+  renderToStaticMarkup(createElement(Board, { view, vertexTargets: [], edgeTargets: [], hexTargets: [], onVertex() {}, onEdge() {}, onHex() {} }));
+const drawGame = (view) => renderToStaticMarkup(createElement(GameScreen, { v: view, send() {} }));
+const plain = (html) => html.replace(/<[^>]*>/g, '');
+
+test('a volcano hex is drawn with its six corners numbered 1 to 6, and only a volcano is', () => {
+  const html = drawBoard(volcanoView());
+  assert.equal((html.match(/class="volcano-corner"/g) ?? []).length, 6);
+  for (const n of [1, 2, 3, 4, 5, 6]) assert.ok(html.includes(`>${n}</text>`), `corner ${n}`);
+  assert.equal((drawBoard(fixture('main').view).match(/class="volcano-corner"/g) ?? []).length, 0);
+});
+
+test('the player whose pick it is gets the five resources, and the ones the bank has run out of are disabled', () => {
+  const v = volcanoView({ bank: [0, 4, 4, 4, 4] });
+  const html = drawGame(v);
+  assert.match(plain(html), /The volcano erupts! Pick a free resource/);
+  assert.match(plain(html), /2 cards left to pick/);
+  const bar = html.slice(html.indexOf('class="volcano-bar"'));
+  const buttons = bar.match(/<button[^>]*res-btn[^>]*>/g) ?? [];
+  assert.equal(buttons.length, 5);
+  assert.equal(buttons.filter((b) => b.includes('disabled')).length, 1, 'only brick is gone');
+});
+
+test('everyone else just sees who is choosing', () => {
+  const v = volcanoView({ volcano: { hex: 0, player: 1, left: 1 } });
+  const html = drawGame(v);
+  assert.match(plain(html), new RegExp(`${v.players[1].name} is picking a free resource from the volcano`));
+  assert.equal(((html.slice(html.indexOf('class="volcano-bar"'))).match(/res-btn/g) ?? []).length, 0, 'no buttons for them');
+});
+
+test('the volcano bar is only there while a pick is going on', () => {
+  assert.ok(!drawGame(fixture('main').view).includes('class="volcano-bar"'));
+});
+
+test('the last lava flow is marked on the board, and a settlement on loan has a crack', () => {
+  const v = volcanoView({ phase: 'main', volcano: null, lava: { hex: 0, die: 3, vertex: 4 }, damaged: [5] });
+  const html = drawBoard(v);
+  assert.ok(html.includes('class="lava"'));
+  assert.ok(html.includes('Lava flowed down corner 3'));
+  assert.ok(html.includes('class="damaged"'));
+  const quiet = drawBoard(volcanoView({ phase: 'main', volcano: null }));
+  assert.ok(!quiet.includes('class="lava"') && !quiet.includes('class="damaged"'));
+});
+
+test('the log tells what the volcano and the lava did', () => {
+  const v = volcanoView({ phase: 'main', volcano: null });
+  const text = (event) => plain(renderToStaticMarkup(createElement(Log, { lines: [event], v })));
+  assert.match(text({ type: 'volcano_picked', player: 0, resource: 2 }), /took a free .* from the volcano/);
+  assert.match(text({ type: 'volcano_blocked', hex: 0 }), /robber is on the volcano/);
+  assert.match(text({ type: 'volcano_bank_empty' }), /bank is out of cards/);
+  assert.match(text({ type: 'lava_flow', hex: 0, die: 4, effect: 'nothing', owner: null }), /corner 4, but nothing was there/);
+  assert.match(text({ type: 'lava_flow', hex: 0, die: 2, effect: 'destroyed', owner: 1 }), /corner 2: .* settlement was destroyed/);
+  assert.match(text({ type: 'lava_flow', hex: 0, die: 6, effect: 'demoted', owner: 1 }), /corner 6: .* city was reduced to a settlement/);
+  assert.match(text({ type: 'timed_out', player: 1, kind: 'volcano' }), /free resources were picked for them at random/);
 });

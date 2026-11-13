@@ -4,6 +4,18 @@ use crate::game::ClockKind;
 use crate::types::{PlayerId, Res, Resource};
 use serde::Serialize;
 
+/// What a lava flow did to the corner it ran down to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LavaEffect {
+    /// Nobody had a building there.
+    Nothing,
+    /// A settlement was destroyed and went back to its owner's stock.
+    Destroyed,
+    /// A city was reduced to a settlement.
+    Demoted,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LogEvent {
@@ -32,6 +44,16 @@ pub enum LogEvent {
     RobberMustMove,
     RobberMoved { player: PlayerId },
     Stole { player: PlayerId, victim: PlayerId },
+
+    // ---- volcanoes ---------------------------------------------------------------------
+    /// `player` took a free card from an erupting volcano.
+    VolcanoPicked { player: PlayerId, resource: Resource },
+    /// A volcano's number came up while the robber sat on it: nobody picks, but the lava still flows.
+    VolcanoBlocked { hex: usize },
+    /// The bank ran out of cards, so the picks still owed at a volcano were dropped.
+    VolcanoBankEmpty,
+    /// The lava from the volcano on `hex` ran down corner `die` (1 to 6). `owner` is whose building was hit.
+    LavaFlow { hex: usize, die: u8, effect: LavaEffect, owner: Option<PlayerId> },
 
     // ---- building and development cards -------------------------------------------
     /// A free setup placement (as opposed to `BuiltSettlement`, which is paid for).
@@ -93,6 +115,14 @@ mod tests {
         assert_eq!(
             wire(&LogEvent::TimedOut { player: PlayerId::new(1), kind: ClockKind::SetupRoad }),
             json!({ "type": "timed_out", "player": 1, "kind": "setup_road" })
+        );
+        assert_eq!(
+            wire(&LogEvent::LavaFlow { hex: 4, die: 6, effect: LavaEffect::Demoted, owner: Some(PlayerId::new(1)) }),
+            json!({ "type": "lava_flow", "hex": 4, "die": 6, "effect": "demoted", "owner": 1 })
+        );
+        assert_eq!(
+            wire(&LogEvent::VolcanoPicked { player: PlayerId::new(0), resource: Resource::Grain }),
+            json!({ "type": "volcano_picked", "player": 0, "resource": 3 })
         );
         assert_eq!(
             wire(&LogEvent::BankTrade { player: PlayerId::new(1), give: Resource::Brick, get: Resource::Ore, ratio: 3 }),
