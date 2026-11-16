@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+### [v2026.11.15]
+mobile ui redesign
+
 ### [v2026.11.13]
 added new hex ‘volcano’
 

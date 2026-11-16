@@ -6,6 +6,7 @@ import '@fontsource/open-sans/latin-600.css';
 import '@fontsource/open-sans/latin-700.css';
 import '@fontsource/open-sans/latin-800.css';
 import './style.css';
+import './mobile.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

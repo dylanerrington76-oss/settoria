@@ -1,4 +1,4 @@
-import { Fragment, ReactNode, useEffect, useRef, useState } from 'react';
+import { createContext, Fragment, ReactNode, useContext, useEffect, useRef, useState } from 'react';
 import {
   Avatar,
   BankIcon,
@@ -28,6 +28,7 @@ import {
   FRIENDLY_ROBBER_MAX_VP,
   ClockKind,
   GameView,
+  lightTextColor,
   LogEvent,
   MAX_OPEN_TRADES,
   textColor,
@@ -415,7 +416,7 @@ export function RulesDialog({ settings, volcano, onClose }: { settings: Settings
   );
 }
 
-export function InfoDialog({ v, onClose }: { v: GameView; onClose: () => void }) {
+export function InfoDialog({ v, onClose, onCosts }: { v: GameView; onClose: () => void; onCosts?: () => void }) {
   const holder = (id: number | null) => (id === null ? 'Nobody' : v.players[id].name);
   const timerMode = TIMER_MODES.find((m) => m.id === v.timer_mode);
   return (
@@ -467,6 +468,7 @@ export function InfoDialog({ v, onClose }: { v: GameView; onClose: () => void })
         </span>
       </div>
       <div className="modal-actions">
+        {onCosts && <button onClick={onCosts}>Building costs</button>}
         <button className="primary" onClick={onClose}>
           Close
         </button>
@@ -653,10 +655,14 @@ export function PlayerRow({ v, id }: { v: GameView; id: number }) {
 /* Log                                                                  */
 /* ------------------------------------------------------------------ */
 
+/** Whether the log is drawn on a dark panel (the phone layout), which needs lighter name colours. */
+const DarkLog = createContext(false);
+
 /** A player's name in their colour. */
 function Name({ v, id }: { v: GameView; id: number }) {
+  const dark = useContext(DarkLog);
   return (
-    <span className="who" style={{ color: textColor(v.players[id].color) }}>
+    <span className="who" style={{ color: (dark ? lightTextColor : textColor)(v.players[id].color) }}>
       {v.players[id].name}
     </span>
   );
@@ -886,7 +892,7 @@ function renderLine(e: LogEvent, v: GameView): ReactNode {
   );
 }
 
-export function Log({ lines, v }: { lines: LogEvent[]; v: GameView }) {
+export function Log({ lines, v, dark = false }: { lines: LogEvent[]; v: GameView; dark?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = box.current;
@@ -897,20 +903,22 @@ export function Log({ lines, v }: { lines: LogEvent[]; v: GameView }) {
   const firstRoll = lines.findIndex((e) => e.type === 'rolled');
   let last: number | null = null;
   return (
-    <div className="log" ref={box} aria-live="polite">
-      {lines.map((e, i) => {
-        const a = actorOf(e);
-        const inSetup = firstRoll === -1 || i < firstRoll;
-        const split = i > 0 && (e.type === 'rolled' || (inSetup && a !== null && last !== null && a !== last));
-        if (a !== null) last = a;
-        return (
-          <Fragment key={i}>
-            {split && <hr />}
-            <p>{renderLine(e, v)}</p>
-          </Fragment>
-        );
-      })}
-    </div>
+    <DarkLog.Provider value={dark}>
+      <div className="log" ref={box} aria-live="polite">
+        {lines.map((e, i) => {
+          const a = actorOf(e);
+          const inSetup = firstRoll === -1 || i < firstRoll;
+          const split = i > 0 && (e.type === 'rolled' || (inSetup && a !== null && last !== null && a !== last));
+          if (a !== null) last = a;
+          return (
+            <Fragment key={i}>
+              {split && <hr />}
+              <p>{renderLine(e, v)}</p>
+            </Fragment>
+          );
+        })}
+      </div>
+    </DarkLog.Provider>
   );
 }
 

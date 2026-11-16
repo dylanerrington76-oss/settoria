@@ -7,6 +7,7 @@ import '@fontsource/open-sans/latin-600.css';
 import '@fontsource/open-sans/latin-700.css';
 import '@fontsource/open-sans/latin-800.css';
 import '../style.css';
+import '../mobile.css';
 import { createRoot } from 'react-dom/client';
 import { GameScreen, Lobby } from '../App';
 import { DEFAULT_SETTINGS, PALETTE, type MapInfo, type Settings } from '../types';

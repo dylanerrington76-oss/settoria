@@ -4,6 +4,7 @@ import Board from './Board';
 import Changelog from './Changelog';
 import Footer from './Footer';
 import MapEditor from './MapEditor';
+import { MobileTable, useIsPhone } from './Mobile';
 import { MAX_FILES_AT_ONCE, MAX_MAP_BYTES, UploadResult, uploadMapFile } from './mapUpload';
 import { GameSettingsPanel, settingsDifferences } from './GameSettings';
 import {
@@ -552,6 +553,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
   const [logOpen, setLogOpen] = useState(true);
   const [pick, setPick] = useState<Res>([0, 0, 0, 0, 0]);
   const [statsOpen, setStatsOpen] = useState(true);
+  const phone = useIsPhone();
 
   const mine = v.current === v.you;
   const main = mine && v.phase === 'main';
@@ -596,188 +598,139 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
     </button>
   );
 
-  return (
-    <div className="table">
-      <div className="left">
-        <main className="stage">
-          <nav className="tools" aria-label="Game menu">
-            {tool('gear', 'Settings', () => setDialog('settings'))}
-            {tool('book', 'Building costs', () => setDialog('rules'))}
-            {tool('expand', 'Full screen', toggleFull)}
-            {tool('info', 'Game info', () => setDialog('info'))}
-          </nav>
+  // The parts of the screen that the desktop and the phone layout share. Each is built once and placed by whichever
+  // layout is showing (the phone's is in Mobile.tsx).
+  const boardEl = (
+    <Board
+      view={v}
+      showPips={pips}
+      vertexTargets={vertexTargets}
+      edgeTargets={edgeTargets}
+      hexTargets={hexTargets}
+      onVertex={(i) => {
+        act(mode === 'city' && main ? { type: 'build_city', vertex: i } : { type: 'build_settlement', vertex: i });
+        setMode(null);
+      }}
+      onEdge={(i) => {
+        act({ type: main && mode === 'bridge' ? 'build_bridge' : 'build_road', edge: i });
+        if (v.phase === 'main') setMode(null);
+      }}
+      onHex={(i) => act({ type: 'move_robber', hex: i })}
+    />
+  );
 
-          <Board
-            view={v}
-            showPips={pips}
-            vertexTargets={vertexTargets}
-            edgeTargets={edgeTargets}
-            hexTargets={hexTargets}
-            onVertex={(i) => {
-              act(mode === 'city' && main ? { type: 'build_city', vertex: i } : { type: 'build_settlement', vertex: i });
-              setMode(null);
-            }}
-            onEdge={(i) => {
-              act({ type: main && mode === 'bridge' ? 'build_bridge' : 'build_road', edge: i });
-              if (v.phase === 'main') setMode(null);
-            }}
-            onHex={(i) => act({ type: 'move_robber', hex: i })}
-          />
+  const tradeEl = (
+    <TradeBanners
+      v={v}
+      onRespond={(id, accept) => act({ type: 'respond_trade', id, accept })}
+      onConfirm={(id, w) => act({ type: 'confirm_trade', id, with: w })}
+      onCancel={(id) => act({ type: 'cancel_trade', id })}
+    />
+  );
 
-          <TradeBanners
-            v={v}
-            onRespond={(id, accept) => act({ type: 'respond_trade', id, accept })}
-            onConfirm={(id, w) => act({ type: 'confirm_trade', id, with: w })}
-            onCancel={(id) => act({ type: 'cancel_trade', id })}
-          />
-
-          {mine && v.phase === 'steal' && (
-            <div className="steal-bar">
-              <span>Steal a random card from</span>
-              {v.steal_candidates.map((id) => (
-                <button key={id} onClick={() => act({ type: 'steal', victim: id })}>
-                  <Avatar color={v.players[id].color} size={22} /> {v.players[id].name}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {v.phase === 'volcano_pick' && <VolcanoBar v={v} onPick={(res) => act({ type: 'volcano_pick', resource: res })} />}
-
-          {showDice && (
-            <button className={'dice' + (canRoll ? ' ready' : '')} disabled={!canRoll} onClick={() => act({ type: 'roll' })} aria-label={canRoll ? 'Roll dice' : 'Last roll'}>
-              <span className="die">
-                <DieFace n={die[0]} />
-              </span>
-              <span className="die">
-                <DieFace n={die[1]} />
-              </span>
-            </button>
-          )}
-        </main>
-
-        <div className={'bottom' + (v.settings.bridges ? ' with-bridge' : '')}>
-          <div className="status">
-            {canRoll ? (
-              <button className="pill" onClick={() => act({ type: 'roll' })} aria-live="polite">
-                <Avatar color={v.players[v.current].color} self size={34} />
-                <span>{statusFor(v)}</span>
-              </button>
-            ) : (
-              <div className="pill" aria-live="polite">
-                {v.phase !== 'game_over' && <Avatar color={v.players[v.current].color} self size={34} />}
-                <span>{statusFor(v)}</span>
-              </div>
-            )}
-            <TurnClock timer={v.timer} override={clockOverride} />
-          </div>
-
-          <div className="handwrap">
-            {discardNeed && (
-              <DiscardPanel
-                need={discardNeed[1]}
-                limit={v.settings.discard_limit}
-                pick={pick}
-                rolled={v.dice ? v.dice[0] + v.dice[1] : null}
-                onUnpick={(i) => setPick((p) => p.map((x, j) => (j === i ? x - 1 : x)) as Res)}
-                onConfirm={() => act({ type: 'discard', cards: pick })}
-              />
-            )}
-            <div className="handbar">
-              <Hand
-                v={v}
-                canPlayDev={canDev}
-                onPlayDev={playDev}
-                pick={discardNeed ? pick : undefined}
-                onPick={
-                  discardNeed
-                    ? (i) => setPick((p) => (total(p) < discardNeed[1] && p[i] < v.hand[i] ? (p.map((x, j) => (j === i ? x + 1 : x)) as Res) : p))
-                    : undefined
-                }
-              />
-            </div>
-          </div>
-
-          <div className={'actions' + (v.settings.bridges ? ' with-bridge' : '')}>
-            <ActBtn kind="trade" label="Trade" title="Trade with players or the bank" disabled={!main} onClick={() => setDialog('trade')} />
-            <ActBtn
-              kind="dev"
-              label="Buy development card"
-              title={costText('Development card', COST_DEV) + ` (${v.deck_left} left)`}
-              disabled={!afford(COST_DEV) || v.deck_left === 0}
-              onClick={() => act({ type: 'buy_dev' })}
-            />
-            <ActBtn
-              kind="road"
-              label="Build road"
-              title={costText('Road', COST_ROAD)}
-              badge={me.roads_left}
-              on={mode === 'road'}
-              disabled={!afford(COST_ROAD) || v.legal.roads.length === 0}
-              onClick={() => pickMode('road')}
-            />
-            {v.settings.bridges && (
-              <ActBtn
-                kind="bridge"
-                label="Build bridge"
-                title={costText('Bridge', COST_BRIDGE) + ' (a road over water; uses a road piece)'}
-                badge={me.roads_left}
-                on={mode === 'bridge'}
-                disabled={!afford(COST_BRIDGE) || v.legal.bridges.length === 0}
-                onClick={() => pickMode('bridge')}
-              />
-            )}
-            <ActBtn
-              kind="settlement"
-              label="Build settlement"
-              title={costText('Settlement', COST_SETTLEMENT)}
-              badge={me.settlements_left}
-              on={mode === 'settlement'}
-              disabled={!afford(COST_SETTLEMENT) || v.legal.settlements.length === 0}
-              onClick={() => pickMode('settlement')}
-            />
-            <ActBtn
-              kind="city"
-              label="Build city"
-              title={costText('City', COST_CITY)}
-              badge={me.cities_left}
-              on={mode === 'city'}
-              disabled={!afford(COST_CITY) || v.legal.cities.length === 0}
-              onClick={() => pickMode('city')}
-            />
-            <ActBtn
-              kind="turn"
-              label="End turn"
-              title="End your turn"
-              disabled={!main}
-              onClick={() => {
-                setMode(null);
-                act({ type: 'end_turn' });
-              }}
-            />
-          </div>
-        </div>
+  const stealEl =
+    mine && v.phase === 'steal' ? (
+      <div className="steal-bar">
+        <span>Steal a random card from</span>
+        {v.steal_candidates.map((id) => (
+          <button key={id} onClick={() => act({ type: 'steal', victim: id })}>
+            <Avatar color={v.players[id].color} size={22} /> {v.players[id].name}
+          </button>
+        ))}
       </div>
+    ) : null;
 
-      <aside className={'rail' + (v.players.length > 5 ? ' crowded' : '')}>
-        <section className={'logpanel' + (logOpen ? '' : ' closed')}>
-          <Log lines={v.log} v={v} />
-        </section>
-        <button className="logbar" aria-expanded={logOpen} onClick={() => setLogOpen(!logOpen)}>
-          <span>Log</span>
-          <Chevron dir={logOpen ? 'up' : 'down'} />
-        </button>
-        <BankRow v={v} />
-        <ul className="plist">
-          {v.players
-            .filter((p) => p.id !== v.you)
-            .map((p) => (
-              <PlayerRow key={p.id} v={v} id={p.id} />
-            ))}
-          <PlayerRow v={v} id={v.you} />
-        </ul>
-      </aside>
+  const volcanoEl = v.phase === 'volcano_pick' ? <VolcanoBar v={v} onPick={(res) => act({ type: 'volcano_pick', resource: res })} /> : null;
 
+  const discardEl = discardNeed ? (
+    <DiscardPanel
+      need={discardNeed[1]}
+      limit={v.settings.discard_limit}
+      pick={pick}
+      rolled={v.dice ? v.dice[0] + v.dice[1] : null}
+      onUnpick={(i) => setPick((p) => p.map((x, j) => (j === i ? x - 1 : x)) as Res)}
+      onConfirm={() => act({ type: 'discard', cards: pick })}
+    />
+  ) : null;
+
+  const handEl = (
+    <Hand
+      v={v}
+      canPlayDev={canDev}
+      onPlayDev={playDev}
+      pick={discardNeed ? pick : undefined}
+      onPick={
+        discardNeed
+          ? (i) => setPick((p) => (total(p) < discardNeed[1] && p[i] < v.hand[i] ? (p.map((x, j) => (j === i ? x + 1 : x)) as Res) : p))
+          : undefined
+      }
+    />
+  );
+
+  const actionEls = (
+    <>
+      <ActBtn kind="trade" label="Trade" title="Trade with players or the bank" disabled={!main} onClick={() => setDialog('trade')} />
+      <ActBtn
+        kind="dev"
+        label="Buy development card"
+        title={costText('Development card', COST_DEV) + ` (${v.deck_left} left)`}
+        disabled={!afford(COST_DEV) || v.deck_left === 0}
+        onClick={() => act({ type: 'buy_dev' })}
+      />
+      <ActBtn
+        kind="road"
+        label="Build road"
+        title={costText('Road', COST_ROAD)}
+        badge={me.roads_left}
+        on={mode === 'road'}
+        disabled={!afford(COST_ROAD) || v.legal.roads.length === 0}
+        onClick={() => pickMode('road')}
+      />
+      {v.settings.bridges && (
+        <ActBtn
+          kind="bridge"
+          label="Build bridge"
+          title={costText('Bridge', COST_BRIDGE) + ' (a road over water; uses a road piece)'}
+          badge={me.roads_left}
+          on={mode === 'bridge'}
+          disabled={!afford(COST_BRIDGE) || v.legal.bridges.length === 0}
+          onClick={() => pickMode('bridge')}
+        />
+      )}
+      <ActBtn
+        kind="settlement"
+        label="Build settlement"
+        title={costText('Settlement', COST_SETTLEMENT)}
+        badge={me.settlements_left}
+        on={mode === 'settlement'}
+        disabled={!afford(COST_SETTLEMENT) || v.legal.settlements.length === 0}
+        onClick={() => pickMode('settlement')}
+      />
+      <ActBtn
+        kind="city"
+        label="Build city"
+        title={costText('City', COST_CITY)}
+        badge={me.cities_left}
+        on={mode === 'city'}
+        disabled={!afford(COST_CITY) || v.legal.cities.length === 0}
+        onClick={() => pickMode('city')}
+      />
+      <ActBtn
+        kind="turn"
+        label="End turn"
+        title="End your turn"
+        disabled={!main}
+        onClick={() => {
+          setMode(null);
+          act({ type: 'end_turn' });
+        }}
+      />
+    </>
+  );
+
+  // Dialogs, and the end-of-game screen: on top of either layout.
+  const dialogEls = (
+    <>
       {dialog === 'trade' && (
         <TradeModal
           v={v}
@@ -812,7 +765,8 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
         />
       )}
       {dialog === 'rules' && <RulesDialog settings={v.settings} volcano={v.board.hexes.some((h) => h.terrain === 'volcano')} onClose={() => setDialog(null)} />}
-      {dialog === 'info' && <InfoDialog v={v} onClose={() => setDialog(null)} />}
+      {/* The phone layout has no book icon, so its info dialog carries a button to the building costs. */}
+      {dialog === 'info' && <InfoDialog v={v} onClose={() => setDialog(null)} onCosts={phone ? () => setDialog('rules') : undefined} />}
       {dialog === 'settings' && <SettingsDialog pips={pips} onPips={setPips} onFullscreen={toggleFull} onClose={() => setDialog(null)} />}
       {v.phase === 'game_over' && (
         <>
@@ -822,6 +776,115 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
           </button>
         </>
       )}
+    </>
+  );
+
+  if (phone) {
+    return (
+      <>
+        <MobileTable
+          v={v}
+          status={statusFor(v)}
+          board={boardEl}
+          overlays={
+            <>
+              {tradeEl}
+              {stealEl}
+              {volcanoEl}
+            </>
+          }
+          clock={<TurnClock timer={v.timer} override={clockOverride} />}
+          actions={actionEls}
+          hand={handEl}
+          discard={discardEl}
+          dice={die}
+          showDice={showDice}
+          canRoll={canRoll}
+          onRoll={() => act({ type: 'roll' })}
+          onSettings={() => setDialog('settings')}
+          onInfo={() => setDialog('info')}
+        />
+        {dialogEls}
+      </>
+    );
+  }
+
+  return (
+    <div className="table">
+      <div className="left">
+        <main className="stage">
+          <nav className="tools" aria-label="Game menu">
+            {tool('gear', 'Settings', () => setDialog('settings'))}
+            {tool('book', 'Building costs', () => setDialog('rules'))}
+            {tool('expand', 'Full screen', toggleFull)}
+            {tool('info', 'Game info', () => setDialog('info'))}
+          </nav>
+
+          {boardEl}
+
+          {tradeEl}
+
+          {stealEl}
+
+          {volcanoEl}
+
+          {showDice && (
+            <button className={'dice' + (canRoll ? ' ready' : '')} disabled={!canRoll} onClick={() => act({ type: 'roll' })} aria-label={canRoll ? 'Roll dice' : 'Last roll'}>
+              <span className="die">
+                <DieFace n={die[0]} />
+              </span>
+              <span className="die">
+                <DieFace n={die[1]} />
+              </span>
+            </button>
+          )}
+        </main>
+
+        <div className={'bottom' + (v.settings.bridges ? ' with-bridge' : '')}>
+          <div className="status">
+            {canRoll ? (
+              <button className="pill" onClick={() => act({ type: 'roll' })} aria-live="polite">
+                <Avatar color={v.players[v.current].color} self size={34} />
+                <span>{statusFor(v)}</span>
+              </button>
+            ) : (
+              <div className="pill" aria-live="polite">
+                {v.phase !== 'game_over' && <Avatar color={v.players[v.current].color} self size={34} />}
+                <span>{statusFor(v)}</span>
+              </div>
+            )}
+            <TurnClock timer={v.timer} override={clockOverride} />
+          </div>
+
+          <div className="handwrap">
+            {discardEl}
+            <div className="handbar">{handEl}</div>
+          </div>
+
+          <div className={'actions' + (v.settings.bridges ? ' with-bridge' : '')}>{actionEls}</div>
+        </div>
+      </div>
+
+      <aside className={'rail' + (v.players.length > 5 ? ' crowded' : '')}>
+        <section className={'logpanel' + (logOpen ? '' : ' closed')}>
+          <Log lines={v.log} v={v} />
+        </section>
+        <button className="logbar" aria-expanded={logOpen} onClick={() => setLogOpen(!logOpen)}>
+          <span>Log</span>
+          <Chevron dir={logOpen ? 'up' : 'down'} />
+        </button>
+        <BankRow v={v} />
+        <ul className="plist">
+          {v.players
+            .filter((p) => p.id !== v.you)
+            .map((p) => (
+              <PlayerRow key={p.id} v={v} id={p.id} />
+            ))}
+          <PlayerRow v={v} id={v.you} />
+        </ul>
+      </aside>
+
+      {dialogEls}
     </div>
   );
 }

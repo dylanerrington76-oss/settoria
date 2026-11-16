@@ -1,0 +1,702 @@
+/*
+ * Phone layout of the game screen (600px wide and under). See src/Mobile.tsx.
+ *
+ * Every rule here belongs to `.m-table`, an element that is only rendered on phones, or to the `m-lock` class that
+ * it puts on <html> while it is showing. Nothing in this file can reach the desktop screen or the lobby.
+ */
+
+html.m-lock,
+html.m-lock body {
+  background: #2d65a0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.m-table {
+  --m-hand-h: 72px;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  background: #2d65a0;
+  color: #fff;
+  overflow: hidden;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-table .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- top bar: menu, bank, pieces ---------- */
+.m-table .m-top {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px 2px;
+}
+.m-table .m-tools {
+  display: flex;
+  gap: 4px;
+  justify-self: start;
+}
+.m-table .m-tools .tool {
+  padding: 2px;
+}
+.m-table .m-tools .tool svg {
+  width: 32px;
+  height: 32px;
+}
+
+.m-table .bank {
+  height: auto;
+  gap: 5px;
+  padding: 3px 6px 4px 5px;
+  background: #285b90;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.m-table .bank-ico {
+  width: 30px;
+  height: 30px;
+}
+.m-table .bank-cards {
+  gap: 3px;
+  padding-top: 4px;
+}
+.m-table .bank .cc {
+  --cw: 22px;
+  --ch: 36px;
+}
+.m-table .cc.bankcard::before {
+  left: 1px;
+  right: 1px;
+  top: -3px;
+  height: 6px;
+  border-width: 1.5px;
+  border-radius: 3px 3px 0 0;
+}
+/* the blue count in the corner of the small cards (bank and player cards) */
+.m-table .bank .cc-badge,
+.m-table .m-pc .cc-badge {
+  top: 1px;
+  right: 1px;
+  width: 18px;
+  height: 18px;
+  padding: 1px 2px 0 0;
+  border-radius: 0 2px 0 100%;
+  font-size: 11.5px;
+}
+.m-table .m-pc .cc-alert {
+  top: 5px;
+  font-size: 22px;
+}
+
+.m-table .m-pieces {
+  justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 5px 5px 2px;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  line-height: 0;
+}
+.m-table .m-pieces.on {
+  background: #1f4a7c;
+}
+.m-table .m-pglyph {
+  width: 52px;
+  height: 17px;
+}
+.m-table .m-pieces > svg:last-child {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---------- player cards ---------- */
+.m-table .m-players {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  list-style: none;
+  margin: 0;
+  padding: 10px 5px 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 5px;
+}
+.m-table .m-player {
+  position: relative;
+  flex: 0 0 calc((100% - 15px) / 4);
+  min-width: 0;
+}
+.m-table .m-player.away {
+  opacity: 0.55;
+}
+.m-table .m-pcard {
+  position: relative;
+  z-index: 1;
+}
+.m-table .m-pband {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 19px;
+  margin: 0 5px 0 14px;
+  padding: 0 3px 0 18px;
+  border-radius: 6px 6px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.m-table .m-vp {
+  position: absolute;
+  z-index: 2;
+  left: -14px;
+  top: -4px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 2px solid;
+  border-radius: 50%;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.m-table .m-vphid {
+  flex: none;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+}
+.m-table .m-pband .person-ico {
+  flex: none;
+  margin: 0;
+  vertical-align: baseline;
+}
+.m-table .m-pname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-table .m-pbody {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  border-radius: 6px;
+  background: linear-gradient(#21497f, #162f57);
+  box-shadow: 0 0 0 1px rgba(8, 20, 45, 0.4);
+}
+.m-table .m-pmain {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 7px 4px 4px;
+}
+.m-table .m-pc {
+  --cw: 23px;
+  --ch: 33px;
+  flex: none;
+}
+.m-table .m-stats {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: space-evenly;
+  padding-left: 2px;
+}
+.m-table .m-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 15px;
+  line-height: 1;
+  color: #fff;
+}
+.m-table .m-stat .stat-ico {
+  width: 15px;
+  height: 14px;
+}
+.m-table .m-stat b {
+  font-weight: 400;
+}
+.m-table .m-stat.held .stat-ico path,
+.m-table .m-stat.held .stat-ico g {
+  stroke: #ffcf3a;
+}
+.m-table .m-stat.held .stat-ico g {
+  fill: #ffd04a;
+}
+.m-table .m-stat.held b {
+  color: #ffd04a;
+  font-weight: 700;
+}
+
+/* pieces left: shown for every player while the toggle at the top right is open */
+.m-table .m-ppieces {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  padding: 5px 2px 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(0, 10, 30, 0.22);
+}
+.m-table .m-ppieces > span {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 15px;
+  line-height: 1;
+}
+.m-table .m-ppieces b {
+  font-weight: 400;
+}
+.m-table .m-roadpip {
+  width: 7px;
+  height: 18px;
+}
+.m-table .m-piecepip {
+  width: 21px;
+  height: 18px;
+}
+
+/* the tab under the card of the player whose turn it is */
+.m-table .m-tab {
+  position: relative;
+  z-index: 0;
+  margin: -8px -1px 0;
+  padding: 11px 3px 4px;
+  border-radius: 0 0 9px 9px;
+  background: #458ef5;
+  color: #d9e8ff;
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: center;
+}
+.m-table .m-tabtxt {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-table .m-tab .pill.timer {
+  display: inline-flex;
+  flex-direction: row;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  margin-top: 2px;
+  padding: 2px 7px;
+  background: none;
+  border-radius: 5px;
+  box-shadow: none;
+  color: #fff;
+  font-size: 15px;
+  line-height: 1.1;
+}
+.m-table .m-tab .pill.timer > span {
+  flex: none;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1.1;
+}
+.m-table .m-tab .pill.timer .timer-label {
+  display: none;
+}
+.m-table .m-tab .pill.timer.urgent {
+  background: #d9574b;
+}
+
+/* what the player whose turn it is rolled, small, under their tab */
+.m-table .m-dice-s {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  pointer-events: none;
+}
+.m-table .m-players.wrap .m-dice-s {
+  position: static;
+  margin-top: 4px;
+}
+.m-table .m-mdie {
+  display: block;
+  width: 23px;
+  height: 23px;
+  padding: 2px;
+  border: 1.5px solid #2b3338;
+  border-radius: 4px;
+  background: linear-gradient(#d2d8db, #b6bdc1);
+}
+.m-table .m-mdie svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- the board ---------- */
+.m-table .m-stage {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.m-table .m-stage .trade-stack {
+  left: 8px;
+  right: 8px;
+  top: 34px; /* clear of the small dice that hang under the current player's tab */
+  max-width: none;
+  max-height: calc(100% - 40px);
+}
+.m-table .m-stage .steal-bar,
+.m-table .m-stage .volcano-bar {
+  bottom: 8px;
+  width: calc(100% - 16px);
+  max-width: 460px;
+}
+.m-table .m-stage .steal-bar,
+.m-table .m-stage .volcano-bar,
+.m-table .m-stage .trade-banner,
+.m-table .m-handwrap .discard {
+  color: var(--ink); /* these are cream panels; the table around them is white-on-blue */
+}
+.m-table .m-stage .steal-bar {
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.m-table .m-logbtn {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 46px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: none;
+  line-height: 0;
+}
+.m-table .m-logbtn.on {
+  border-color: #fff;
+  background: #253b49;
+}
+.m-table .m-logbtn svg {
+  width: 28px;
+  height: 31px;
+}
+
+/* your dice: white, big, bottom right of the board */
+.m-table .dice {
+  right: 6px;
+  bottom: 6px;
+  gap: 4px;
+  z-index: 2;
+}
+.m-table .die,
+.m-table .dice:not(.ready) .die {
+  width: 56px;
+  height: 56px;
+  padding: 5px;
+  border: 2px solid #151515;
+  border-radius: 10px;
+  background: linear-gradient(#ffffff, #e2edf3);
+  box-shadow: 0 2px 5px rgba(0, 20, 50, 0.4);
+}
+
+/* ---------- action buttons ---------- */
+.m-table .m-actions {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+  padding: 4px 8px 7px;
+}
+.m-table .m-actions .act {
+  flex: 0 1 55px;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  aspect-ratio: 1 / 1;
+  border-radius: 11px;
+}
+@supports not (aspect-ratio: 1 / 1) {
+  .m-table .m-actions .act {
+    height: 50px;
+  }
+}
+.m-table .m-actions .act svg {
+  width: 58%;
+  height: 58%;
+}
+.m-table .m-actions .act-badge {
+  top: 1px;
+  right: 1px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 3px;
+  border-radius: 9px;
+  font-size: 11px;
+}
+
+/* ---------- your hand ---------- */
+.m-table .m-handwrap {
+  position: relative;
+  flex: none;
+}
+.m-table .m-hand {
+  height: calc(var(--m-hand-h) + env(safe-area-inset-bottom, 0px));
+  padding: 8px 8px env(safe-area-inset-bottom, 0px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 10px 10px 0 0;
+  background: #1f4880;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.m-table .m-hand .hand {
+  align-items: flex-start;
+  height: auto;
+  padding-left: 0;
+  gap: 5px;
+}
+.m-table .m-hand .cc {
+  --cw: 40px;
+  --ch: 55px;
+}
+.m-table .m-hand .hand-sep {
+  margin: 0 6px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* discarding: the panel sits right above the hand and covers the board's lower part */
+.m-table .m-handwrap .discard {
+  width: 100%;
+  min-height: 0;
+  bottom: calc(100% + 4px);
+  border-radius: 8px;
+}
+.m-table .m-handwrap .discard header {
+  gap: 12px;
+  padding: 8px 12px;
+}
+.m-table .m-handwrap .discard h2 {
+  font-size: 17px;
+}
+.m-table .m-handwrap .discard p {
+  font-size: 13.5px;
+  line-height: 1.3;
+}
+.m-table .m-handwrap .discard-zone {
+  min-height: 60px;
+  padding: 6px 10px;
+  gap: 5px;
+}
+.m-table .m-handwrap .zone-card .cc {
+  --cw: 34px;
+  --ch: 47px;
+}
+.m-table .m-handwrap .discard footer {
+  padding: 6px 12px 8px;
+}
+
+/* ---------- log: opens over the lower part of the board, beside its button ---------- */
+.m-table .m-log {
+  position: absolute;
+  z-index: 6;
+  left: 54px;
+  right: 6px;
+  bottom: calc(var(--m-hand-h) + env(safe-area-inset-bottom, 0px) + 5px);
+  height: min(172px, 36%);
+  display: flex;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #143153;
+  box-shadow: 0 4px 16px rgba(0, 15, 40, 0.45);
+}
+.m-table .m-log .log {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 8px 6px 12px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  -webkit-user-select: text;
+  user-select: text;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #fff;
+}
+.m-table .m-log .log p {
+  margin: 0 0 4px;
+  color: #fff;
+}
+.m-table .m-log .log hr {
+  margin: 6px 0 8px;
+  border-top-color: rgba(255, 255, 255, 0.6);
+}
+.m-table .m-log .log::-webkit-scrollbar {
+  width: 6px;
+}
+.m-table .m-log .log::-webkit-scrollbar-track {
+  margin: 4px 0;
+  background: transparent;
+}
+.m-table .m-log .log::-webkit-scrollbar-thumb {
+  border: 0;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* the end-of-game Map / Stats switch moves from the top right (where the pieces button is) to above the hand */
+.m-table ~ .stats-toggle {
+  top: auto;
+  right: 10px;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px) + 10px);
+}
+
+/* ---------- trade offers over the board: tighter than on a desktop ---------- */
+.m-table .m-stage .trade-stack {
+  gap: 5px;
+}
+.m-table .m-stage .trade-banner {
+  padding: 7px 10px 8px;
+}
+.m-table .m-stage .trade-line {
+  gap: 6px;
+  font-size: 14px;
+}
+.m-table .m-stage .trade-line .avatar {
+  width: 22px;
+  height: 22px;
+}
+.m-table .m-stage .trade-replies {
+  gap: 6px 10px;
+  margin-top: 6px;
+}
+
+/* ---------- narrower phones (360 to 389px wide, then 340px and under) ---------- */
+@media (max-width: 389px) {
+  .m-table .m-top {
+    gap: 4px;
+    padding: 8px 5px 2px;
+  }
+  .m-table .m-tools .tool svg {
+    width: 28px;
+    height: 28px;
+  }
+  .m-table .bank {
+    gap: 3px;
+    padding: 3px 4px;
+  }
+  .m-table .bank-ico {
+    width: 24px;
+    height: 24px;
+  }
+  .m-table .bank-cards {
+    gap: 2px;
+  }
+  .m-table .bank .cc {
+    --cw: 19px;
+    --ch: 32px;
+  }
+  .m-table .bank .cc-badge,
+  .m-table .m-pc .cc-badge {
+    width: 15px;
+    height: 15px;
+    font-size: 10px;
+  }
+  .m-table .m-pglyph {
+    width: 44px;
+    height: 15px;
+  }
+  .m-table .m-pc {
+    --cw: 21px;
+    --ch: 30px;
+  }
+  .m-table .m-pmain {
+    gap: 1px;
+    padding: 7px 3px 4px;
+  }
+  .m-table .m-stat,
+  .m-table .m-ppieces > span {
+    font-size: 13px;
+  }
+  .m-table .m-stat .stat-ico {
+    width: 13px;
+    height: 12px;
+  }
+  .m-table .m-piecepip {
+    width: 18px;
+    height: 15px;
+  }
+  .m-table .m-pband {
+    font-size: 12px;
+  }
+}
+@media (max-width: 339px) {
+  .m-table .m-tools .tool svg {
+    width: 25px;
+    height: 25px;
+  }
+  .m-table .m-pglyph {
+    width: 38px;
+  }
+  .m-table .bank .cc {
+    --cw: 17px;
+    --ch: 28px;
+  }
+  .m-table .m-pc {
+    --cw: 19px;
+    --ch: 27px;
+  }
+  .m-table .m-stats {
+    padding-left: 0;
+  }
+  .m-table .m-stat,
+  .m-table .m-ppieces > span {
+    font-size: 12px;
+  }
+  .m-table .m-stat .stat-ico {
+    width: 11px;
+    height: 10px;
+  }
+  .m-table .m-actions {
+    gap: 4px;
+    padding-left: 5px;
+    padding-right: 5px;
+  }
+}

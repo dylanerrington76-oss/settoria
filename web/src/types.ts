@@ -81,6 +81,23 @@ export function textColor(hex: string): string {
   return out;
 }
 
+const NAVY_LUM = luminance('#143153');
+const lightCache = new Map<string, string>();
+/**
+ * The counterpart of `textColor` for the dark panels of the phone layout (the log): a lighter version of a
+ * player color, lightened until it has a 4.5:1 contrast ratio against the panel's navy.
+ */
+export function lightTextColor(hex: string): string {
+  const hit = lightCache.get(hex);
+  if (hit) return hit;
+  const [r, g, b] = rgb(hex);
+  const mix = (v: number, t: number) => Math.round(v + (255 - v) * t).toString(16).padStart(2, '0');
+  let out = hex;
+  for (let i = 1; i <= 40 && contrast(luminance(out), NAVY_LUM) < 4.5; i++) out = '#' + mix(r, i * 0.05) + mix(g, i * 0.05) + mix(b, i * 0.05);
+  lightCache.set(hex, out);
+  return out;
+}
+
 /** Turn timer modes the host can choose in the lobby (seconds must match `TimerMode::secs` in src/game.rs). */
 export type TimerMode = 'very_fast' | 'fast' | 'normal' | 'slow';
 export const TIMER_MODES: { id: TimerMode; label: string; secs: number }[] = [
