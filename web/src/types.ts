@@ -130,7 +130,6 @@ export interface Settings {
   points_to_win: number;
   discard_limit: number;
   friendly_robber: boolean;
-  /** Players may build bridges: roads over narrow water (`bridges` in src/game.rs). */
   bridges: boolean;
   max_roads: number;
   max_cities: number;
@@ -198,7 +197,6 @@ export const CLOCK_TITLES: Record<ClockKind, string> = {
 export interface TimerView {
   kind: ClockKind;
   player: number;
-  /** Time left when this view was built; the client counts down from the moment it arrived. */
   remaining_ms: number;
   total_ms: number;
 }
@@ -230,7 +228,6 @@ export interface Vertex {
 export interface Edge {
   a: number;
   b: number;
-  /** A sea edge between two land corners: only a bridge can be built here. Absent on land edges. */
   bridge?: boolean;
 }
 export interface Port {
@@ -267,6 +264,15 @@ export interface VpBreakdown {
   largest_army: number;
   longest_road: number;
 }
+/** Whole-game totals per player, sent once the game is over (`PlayerStats` in src/game.rs). */
+export interface PlayerStats {
+  /** Resource cards received because of dice rolls, volcano picks included. */
+  dice_income: number;
+  /** Development cards bought from the deck. */
+  dev_cards_bought: number;
+  /** Completed player-to-player trades (bank trades are not counted). */
+  trades: number;
+}
 export interface PlayerView {
   id: number;
   name: string;
@@ -283,10 +289,12 @@ export interface PlayerView {
   vp_total: number | null;
   /** Set together with `vp_total`, once the game is over. */
   vp_breakdown: VpBreakdown | null;
+  /** Set together with `vp_total`, once the game is over. */
+  stats: PlayerStats | null;
 }
 export type Reply = 'proposer' | 'pending' | 'accepted' | 'declined';
 /** The most offers one player may have open at once (MAX_OPEN_TRADES in src/game.rs). */
-export const MAX_OPEN_TRADES = 6;
+export const MAX_OPEN_TRADES = 4;
 /** Seconds a bank trade or a completed player trade adds to the turn clock (BONUS_SECS in src/game.rs). */
 export const TRADE_BONUS_SECS = 10;
 export interface Trade {
@@ -402,6 +410,8 @@ export interface GameView {
   largest_army_holder: number | null;
   winner: number | null;
   log: LogEvent[];
+  /** Number of the first line in `log` (lines are numbered from 0 for the whole game). */
+  log_start: number;
   /** Seat ids in turn order (randomised at the start of the game). */
   order: number[];
   timer_mode: TimerMode;

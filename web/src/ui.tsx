@@ -63,7 +63,8 @@ export function Bundle({ r }: { r: Res }) {
   );
 }
 
-export function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose?: () => void }) {
+/** `above` is shown over the title (the game-over dialog's Results / Stats tabs). */
+export function Modal({ title, above, children, onClose }: { title: string; above?: ReactNode; children: ReactNode; onClose?: () => void }) {
   useEffect(() => {
     if (!onClose) return;
     const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -73,6 +74,7 @@ export function Modal({ title, children, onClose }: { title: string; children: R
   return (
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}>
       <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+        {above}
         <h2>{title}</h2>
         {children}
       </div>
@@ -239,6 +241,10 @@ export function TradeModal({
   const ok = total(give) > 0 && total(want) > 0 && !clash && !duplicate && !full;
   const ratio = bGive === null ? 0 : v.ratios[bGive];
   const bankOk = bGive !== null && bGet !== null && bGive !== bGet && v.hand[bGive] >= ratio && v.bank[bGet] > 0;
+  // After a trade the given resource stays selected so repeat trades are one tap; drop it once the hand can't cover another.
+  useEffect(() => {
+    if (bGive !== null && v.hand[bGive] < v.ratios[bGive]) setBGive(null);
+  }, [bGive, v.hand, v.ratios]);
 
   return (
     <Modal title="Trade" onClose={onClose}>
@@ -292,7 +298,6 @@ export function TradeModal({
               disabled={!bankOk}
               onClick={() => {
                 onBank(bGive!, bGet!);
-                setBGive(null);
                 setBGet(null);
               }}
             >

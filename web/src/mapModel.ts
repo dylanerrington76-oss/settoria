@@ -183,19 +183,37 @@ export function freeCoastEdges(layout: Layout, ignorePort: number | null = null)
   return out;
 }
 
-/** The free coast edge whose ship position is nearest to a point, if one is close enough. */
-export function nearestCoastEdge(layout: Layout, x: number, y: number, ignorePort: number | null = null, reach = 1.3 * S): Spot | null {
-  let best: Spot | null = null;
-  let bd = reach;
-  for (const e of freeCoastEdges(layout, ignorePort)) {
+/** A free coast edge together with where its ship sits, so a drag need not work that out again on every move. */
+export interface PortSpot extends Spot {
+  sx: number;
+  sy: number;
+}
+
+/** `freeCoastEdges` with each edge's ship position worked out. Build it once per drag, not once per pointer move. */
+export function portSpots(layout: Layout, ignorePort: number | null = null): PortSpot[] {
+  return freeCoastEdges(layout, ignorePort).map((e) => {
     const p = portLayout(e.q, e.r, e.side);
-    const d = Math.hypot(p.sx - x, p.sy - y);
+    return { ...e, sx: p.sx, sy: p.sy };
+  });
+}
+
+/** The spot whose ship position is nearest to a point, if one is close enough. */
+export function nearestSpot(spots: readonly PortSpot[], x: number, y: number, reach = 1.3 * S): Spot | null {
+  let best: PortSpot | null = null;
+  let bd = reach;
+  for (const e of spots) {
+    const d = Math.hypot(e.sx - x, e.sy - y);
     if (d < bd) {
       bd = d;
       best = e;
     }
   }
-  return best;
+  return best && { q: best.q, r: best.r, side: best.side };
+}
+
+/** The free coast edge whose ship position is nearest to a point, if one is close enough. */
+export function nearestCoastEdge(layout: Layout, x: number, y: number, ignorePort: number | null = null, reach = 1.3 * S): Spot | null {
+  return nearestSpot(portSpots(layout, ignorePort), x, y, reach);
 }
 
 /** Drop harbours whose hex has gone, whose edge is no longer on the coast, or that share an edge. */

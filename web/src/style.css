@@ -392,6 +392,11 @@ button.stack:disabled { opacity: 1; cursor: default; }
 .final-row span { flex: 1; }
 .modal:has(.final-table) { width: min(700px, 100%); }
 .final-scroll { overflow-x: auto; }
+.final-tabs { margin: 0 0 14px; }
+.final-panels { display: grid; }
+.final-panel { grid-area: 1 / 1; min-width: 0; }
+.final-panel.off { visibility: hidden; }
+.final-note { margin: 12px 2px 0; font-size: 12px; color: var(--mute); }
 .final-table { width: 100%; border-collapse: collapse; border-left: 6px solid var(--line); background: rgba(255, 255, 255, 0.6); border-radius: 8px; font-size: 14px; }
 .final-table th, .final-table td { padding: 7px 8px; text-align: center; border-bottom: 1px solid rgba(0, 0, 0, 0.08); }
 .final-table tbody tr:last-child > * { border-bottom: 0; }

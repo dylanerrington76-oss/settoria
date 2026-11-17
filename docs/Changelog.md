@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+### [v2026.11.16]
+After a trade, the Give resource now stays selected, so repeat trades only need a new Get pick.
+
 ### [v2026.11.15]
 mobile ui redesign
 

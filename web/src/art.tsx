@@ -1,3 +1,4 @@
+import { useId as reactUseId } from 'react';
 import type { ReactNode } from 'react';
 import { luminance } from './types';
 
@@ -95,8 +96,7 @@ export function Glyph({ res, fill, fill2, stroke }: { res: number; fill: string;
 }
 
 /* Cards */
-let gid = 0;
-const useId = (p: string) => `${p}${++gid}`;
+const useId = (p: string) => p + reactUseId().replace(/:/g, '');
 
 function CardDefs({ id, top, bottom }: { id: string; top: string; bottom: string }) {
   return (

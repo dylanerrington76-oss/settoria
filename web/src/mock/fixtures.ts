@@ -130,7 +130,7 @@ function pieces(extra: boolean) {
 
 const pv = (id: number, cards: number, vp: number, road: number, left: [number, number, number], knights = 0) => ({
   id, name: NAMES[id], color: PALETTE[[5, 4, 3, 0][id]].hex, connected: true, cards, dev_cards: 0, knights,
-  roads_left: left[0], settlements_left: left[1], cities_left: left[2], vp, longest_road: road, vp_total: null, vp_breakdown: null,
+  roads_left: left[0], settlements_left: left[1], cities_left: left[2], vp, longest_road: road, vp_total: null, vp_breakdown: null, stats: null,
 });
 
 function base(): GameView {
@@ -142,7 +142,7 @@ function base(): GameView {
     bank: [19, 19, 19, 19, 19], deck_left: 25, dev_played: false, ratios: [4, 4, 4, 4, 4],
     setup_needs: 'settlement', discards: [], steal_candidates: [], volcano: null, lava: null, damaged: [], road_building_left: 0, trades: [],
     legal: { settlements: [], cities: [], roads: [], bridges: [], hexes: [] },
-    longest_road_holder: null, largest_army_holder: null, winner: null, log: [],
+    longest_road_holder: null, largest_army_holder: null, winner: null, log: [], log_start: 0,
     order: [0, 1, 2, 3], timer_mode: 'normal', settings: DEFAULT_SETTINGS,
     timer: { kind: 'setup_settlement', player: 0, remaining_ms: 94_000, total_ms: 120_000 },
   };
@@ -231,9 +231,18 @@ export function fixture(name: string): { view: GameView; clock?: number } {
     const parts: [number, number, number, number, number][] = [
       [3, 4, 1, 0, 2], [2, 6, 0, 0, 0], [3, 4, 0, 0, 0], [2, 2, 0, 2, 0], // settlements, cities, dev cards, army, road
     ];
+    const stats: [number, number, number][] = [
+      [34, 3, 6], [27, 2, 4], [22, 1, 5], [18, 0, 2], // dice income, dev cards bought, trades
+    ];
     v.players = [pv(0, 5, 10, 4, [9, 1, 2], 3), pv(1, 5, 8, 2, [11, 2, 3]), pv(2, 6, 7, 1, [12, 2, 3]), pv(3, 3, 6, 2, [12, 3, 3])].map((p, i) => {
       const [settlements, cities, dev_cards, largest_army, longest_road] = parts[i];
-      return { ...p, vp_total: p.vp, vp_breakdown: { settlements, cities, dev_cards, largest_army, longest_road } };
+      const [dice_income, dev_cards_bought, trades] = stats[i];
+      return {
+        ...p,
+        vp_total: p.vp,
+        vp_breakdown: { settlements, cities, dev_cards, largest_army, longest_road },
+        stats: { dice_income, dev_cards_bought, trades },
+      };
     });
     return { view: v };
   }

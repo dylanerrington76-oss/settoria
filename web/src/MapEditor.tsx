@@ -11,23 +11,25 @@ import {
   MAX_MAP_BYTES,
   MAX_NAME_CHARS,
   Meta,
+  PortSpot,
   S,
   STEPS,
   cellKey,
   checkMap,
   defaultMeta,
   fileNameFor,
-  freeCoastEdges,
   hexCenter,
   inRange,
   mapFileText,
   maxRandomDeserts,
   nearestCoastEdge,
+  nearestSpot,
   normalizePorts,
   parseMapJson,
   pixelToHex,
   planPools,
   portLayout,
+  portSpots,
   resolvePlayers,
 } from './mapModel';
 import { HexShape, PieceDefs, Piers, Ship } from './MapPieces';
@@ -53,6 +55,18 @@ const pieceTerrain = (piece: Piece): EdHex['terrain'] => (piece === 'desert' ? '
 /** The bar piece a hex of this terrain came from. */
 const terrainPiece = (terrain: EdHex['terrain']): Piece => (terrain === 'desert' ? 'desert' : terrain === 'volcano' ? 'volcano' : 'wild');
 type Target = { t: 'cell'; q: number; r: number; ok: boolean } | { t: 'edge'; q: number; r: number; side: number } | { t: 'bar' } | { t: 'none' };
+
+/** The white dots marking every free coast edge during a port drag. Only redraws when the highlighted edge changes. */
+const PortDots = memo(function PortDots({ spots, active }: { spots: readonly PortSpot[]; active: string | null }) {
+  return (
+    <>
+      {spots.map((e) => {
+        const key = `${e.q},${e.r},${e.side}`;
+        return <circle key={key} cx={e.sx} cy={e.sy} r={key === active ? 0 : 7} fill="#fff" opacity={0.8} pointerEvents="none" />;
+      })}
+    </>
+  );
+});
 
 /** A piece being dragged: new from the bar (`id` null) or one already on the map. Positions are screen pixels. */
 interface Drag {
@@ -175,6 +189,16 @@ export default function MapEditor({ onBack }: { onBack: () => void }) {
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   const dragRef = useRef<Drag | null>(null);
+  // The free coast edges for the port drag in progress. Rebuilt only when the drag starts or the layout changes
+  // under it (undo, redo, delete), not on every pointer move.
+  const spotsRef = useRef<{ layout: Layout; id: number | null; spots: PortSpot[] } | null>(null);
+  const spotsFor = useCallback((l: Layout, id: number | null): PortSpot[] => {
+    const c = spotsRef.current;
+    if (c && c.layout === l && c.id === id) return c.spots;
+    const spots = portSpots(l, id);
+    spotsRef.current = { layout: l, id, spots };
+    return spots;
+  }, []);
   const nextId = useRef(1);
   const canvasRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLElement>(null);
@@ -402,7 +426,7 @@ export default function MapEditor({ onBack }: { onBack: () => void }) {
       const free = !l.hexes.some((h) => h.id !== d.id && h.q === q && h.r === r);
       return { t: 'cell', q, r, ok: free && inRange(q, r) && (d.id !== null || l.hexes.length < MAX_HEXES) };
     }
-    const e = nearestCoastEdge(l, w.x, w.y, d.id);
+    const e = nearestSpot(spotsFor(l, d.id), w.x, w.y);
     return e ? { t: 'edge', ...e } : { t: 'none' };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -472,7 +496,10 @@ export default function MapEditor({ onBack }: { onBack: () => void }) {
 
   const dragging = drag !== null;
   useLayoutEffect(() => {
-    if (!dragging) return;
+    if (!dragging) {
+      spotsRef.current = null;
+      return;
+    }
     const move = (ev: PointerEvent) => {
       const d = dragRef.current;
       if (!d) return;
@@ -721,12 +748,12 @@ export default function MapEditor({ onBack }: { onBack: () => void }) {
                 pointerEvents="none"
               />
             )}
-            {ghostLive && drag!.kind === 'port' &&
-              freeCoastEdges(layout, drag!.id).map((e) => {
-                const p = portLayout(e.q, e.r, e.side);
-                const on = drag!.target.t === 'edge' && drag!.target.q === e.q && drag!.target.r === e.r && drag!.target.side === e.side;
-                return <circle key={`${e.q},${e.r},${e.side}`} cx={p.sx} cy={p.sy} r={on ? 0 : 7} fill="#fff" opacity={0.8} pointerEvents="none" />;
-              })}
+            {ghostLive && drag!.kind === 'port' && (
+              <PortDots
+                spots={spotsFor(layout, drag!.id)}
+                active={drag!.target.t === 'edge' ? `${drag!.target.q},${drag!.target.r},${drag!.target.side}` : null}
+              />
+            )}
             {drag && drag.kind === 'port' && drag.target.t === 'edge' && (() => {
               const p = portLayout(drag.target.q, drag.target.r, drag.target.side);
               return (

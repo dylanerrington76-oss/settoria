@@ -342,7 +342,7 @@ pub enum Reply {
 }
 
 /// The most player offers one proposer may have open at once.
-pub const MAX_OPEN_TRADES: usize = 6;
+pub const MAX_OPEN_TRADES: usize = 4;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Trade {
@@ -365,6 +365,20 @@ pub struct Player {
     pub roads_left: u8,
     pub settlements_left: u8,
     pub cities_left: u8,
+    /// Running totals for the end-of-game stats tab.
+    pub stats: PlayerStats,
+}
+
+/// Per-player totals over the whole game, shown on the game-over screen's Stats tab.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PlayerStats {
+    /// Resource cards received because of a dice roll: production for settlements and cities, plus the free
+    /// cards picked at an erupting volcano.
+    pub dice_income: u32,
+    /// Development cards bought from the deck (played or not).
+    pub dev_cards_bought: u32,
+    /// Completed player-to-player trades (counted once for each of the two players; bank trades don't count).
+    pub trades: u32,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -440,6 +454,8 @@ pub struct Game {
     pub largest_army_holder: Option<PlayerId>,
     pub winner: Option<PlayerId>,
     pub log: Vec<LogEvent>,
+    /// Events dropped off the front of `log` so far, so every event keeps a number that never changes.
+    log_dropped: usize,
     /// Seat ids in turn order (randomised when the game starts). Drives the setup
     /// draft (forward, then backward) and every turn after it.
     pub order: Vec<PlayerId>,
@@ -514,6 +530,8 @@ pub struct PlayerView {
     pub vp_total: Option<usize>,
     /// Where `vp_total` came from; revealed together with it.
     pub vp_breakdown: Option<VpBreakdown>,
+    /// Whole-game totals (dice income, dev cards bought, trades); revealed with `vp_total` once the game is over.
+    pub stats: Option<PlayerStats>,
 }
 
 #[derive(Serialize)]
@@ -555,6 +573,9 @@ pub struct GameView<'a> {
     pub largest_army_holder: Option<PlayerId>,
     pub winner: Option<PlayerId>,
     pub log: &'a [LogEvent],
+    /// The number of the first event in `log` (events are numbered from 0 for the whole game), so a client can tell
+    /// which lines it already has when the window slides.
+    pub log_start: usize,
     pub order: &'a [PlayerId],
     pub timer_mode: TimerMode,
     pub timer: Option<TimerView>,
@@ -660,6 +681,7 @@ impl Game {
             roads_left: settings.max_roads,
             settlements_left: settings.max_settlements,
             cities_left: settings.max_cities,
+            stats: PlayerStats::default(),
         });
 
         let mut order: Vec<PlayerId> = PlayerId::range(n).collect();
@@ -701,6 +723,7 @@ impl Game {
             largest_army_holder: None,
             winner: None,
             log: vec![],
+            log_dropped: 0,
             order,
             timer_mode: mode,
             clock: None,
@@ -726,6 +749,7 @@ impl Game {
         self.log.push(event);
         if self.log.len() > 200 {
             self.log.remove(0);
+            self.log_dropped += 1;
         }
     }
 
@@ -1243,6 +1267,7 @@ impl Game {
                 self.players[p].hand[r] += received[p][r];
                 self.bank[r] -= received[p][r];
             }
+            self.players[p].stats.dice_income += received[p].total();
             if received[p].total() > 0 {
                 self.log(LogEvent::Collected { player: p, cards: received[p] });
             }
@@ -1330,6 +1355,7 @@ impl Game {
         }
         self.bank[r] -= 1;
         self.players[p].hand[r] += 1;
+        self.players[p].stats.dice_income += 1;
         self.volcano_picks[0].1 -= 1;
         if self.volcano_picks[0].1 == 0 {
             self.volcano_picks.remove(0);
@@ -1669,6 +1695,7 @@ impl Game {
         self.pay(p, &COST_DEV);
         let card = self.deck.pop().unwrap();
         self.players[p].dev_new[card] += 1;
+        self.players[p].stats.dev_cards_bought += 1;
         self.log(LogEvent::BoughtDevCard { player: p });
         self.bonus += Duration::from_secs(BONUS_SECS);
         Ok(())
@@ -1773,8 +1800,7 @@ impl Game {
         Ok(())
     }
 
-    /// Open another offer to every other player. A proposer may have several open at
-    /// once (up to `MAX_OPEN_TRADES`), each answered separately.
+    /// Open another offer to every other player
     fn do_offer_trade(&mut self, p: PlayerId, give: Res, want: Res) -> Result<(), String> {
         if self.phase != Phase::Main {
             return Err("You can only trade after rolling".into());
@@ -1840,6 +1866,8 @@ impl Game {
             self.players[with].hand[r] = self.players[with].hand[r] + t.give[r] - t.want[r];
         }
         self.trades.retain(|o| o.id != id);
+        self.players[p].stats.trades += 1;
+        self.players[with].stats.trades += 1;
         self.log(LogEvent::TradeCompleted { player: p, with });
         self.bonus += Duration::from_secs(BONUS_SECS);
         Ok(())
@@ -2111,6 +2139,7 @@ impl Game {
                     longest_road: road_lens[i],
                     vp_total: if over { Some(self.vp_total(i)) } else { None },
                     vp_breakdown: if over { Some(self.vp_breakdown(i)) } else { None },
+                    stats: if over { Some(pl.stats) } else { None },
                 }
             })
             .collect();
@@ -2157,6 +2186,7 @@ impl Game {
             largest_army_holder: self.largest_army_holder,
             winner: self.winner,
             log: &self.log[start..],
+            log_start: self.log_dropped + start,
             order: &self.order,
             timer_mode: self.timer_mode,
             timer: self.clock.map(|c| TimerView {
@@ -3945,6 +3975,99 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // End-of-game stats
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn dice_income_counts_the_cards_received_from_rolls() {
+        let mut g = Game::new(names(2));
+        let h = (0..g.board.hexes.len())
+            .find(|&h| g.board.hexes[h].number.is_some() && g.board.hexes[h].terrain.resource().is_some())
+            .expect("a producing hex");
+        let roll = g.board.hexes[h].number.unwrap();
+        let v = g.board.hexes[h].vertices[0];
+        g.buildings[v] = Some(Building { owner: P0, city: false });
+        g.distribute(roll);
+        let first = g.players[P0].hand.total();
+        assert!(first >= 1);
+        assert_eq!(g.players[P0].stats.dice_income, first);
+        assert_eq!(g.players[P1].stats.dice_income, 0);
+        // a city pays double, and the total keeps adding up
+        g.buildings[v] = Some(Building { owner: P0, city: true });
+        g.distribute(roll);
+        assert_eq!(g.players[P0].stats.dice_income, g.players[P0].hand.total());
+        // cards that are not from a roll (a bank trade, say) are not income
+        g.players[P0].hand = Res::new(4, 0, 0, 0, 0);
+        let before = g.players[P0].stats.dice_income;
+        g.phase = Phase::Main;
+        g.current = P0;
+        g.apply(P0, Action::BankTrade { give: Resource::Brick, get: Resource::Ore }).unwrap();
+        assert_eq!(g.players[P0].stats.dice_income, before);
+    }
+
+    #[test]
+    fn volcano_picks_count_as_dice_income() {
+        let mut g = volcano_game(2);
+        build_on_volcano(&mut g, 0, P0, false); // 1 card
+        build_on_volcano(&mut g, 2, P1, true); // 2 cards
+        g.resolve_roll(8);
+        while g.phase == Phase::VolcanoPick {
+            let (q, _) = g.volcano_picks[0];
+            g.apply(q, Action::VolcanoPick { resource: Resource::Grain }).unwrap();
+        }
+        assert_eq!(g.players[P0].stats.dice_income, 1);
+        assert_eq!(g.players[P1].stats.dice_income, 2);
+    }
+
+    #[test]
+    fn buying_development_cards_is_counted_per_player() {
+        let mut g = Game::new(names(2));
+        g.phase = Phase::Main;
+        g.current = P0;
+        g.rolled = true;
+        g.players[P0].hand = Res::new(0, 0, 2, 2, 2);
+        g.apply(P0, Action::BuyDev).unwrap();
+        g.apply(P0, Action::BuyDev).unwrap();
+        assert_eq!(g.players[P0].stats.dev_cards_bought, 2);
+        assert_eq!(g.players[P1].stats.dev_cards_bought, 0);
+        // a refused purchase is not counted
+        assert!(g.apply(P0, Action::BuyDev).is_err());
+        assert_eq!(g.players[P0].stats.dev_cards_bought, 2);
+    }
+
+    #[test]
+    fn only_completed_player_trades_are_counted_for_both_sides() {
+        let mut g = trading_game();
+        g.apply(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 1, 0, 0, 0) }).unwrap(); // 0
+        g.apply(P0, Action::OfferTrade { give: Res::new(1, 0, 0, 0, 0), want: Res::new(0, 0, 0, 1, 0) }).unwrap(); // 1
+        g.apply(P1, Action::RespondTrade { id: 0, accept: true }).unwrap();
+        // proposing and accepting alone is not a trade
+        assert_eq!(g.players.iter().map(|p| p.stats.trades).collect::<Vec<_>>(), vec![0, 0, 0]);
+        g.apply(P0, Action::ConfirmTrade { id: 0, with: P1 }).unwrap();
+        assert_eq!(g.players.iter().map(|p| p.stats.trades).collect::<Vec<_>>(), vec![1, 1, 0]);
+        // a withdrawn offer is not a trade
+        g.apply(P0, Action::CancelTrade { id: 1 }).unwrap();
+        assert_eq!(g.players.iter().map(|p| p.stats.trades).collect::<Vec<_>>(), vec![1, 1, 0]);
+        // a bank trade is not a player trade
+        g.players[P0].hand = Res::new(4, 0, 0, 0, 0);
+        g.apply(P0, Action::BankTrade { give: Resource::Brick, get: Resource::Ore }).unwrap();
+        assert_eq!(g.players[P0].stats.trades, 1);
+    }
+
+    #[test]
+    fn stats_are_revealed_only_when_the_game_is_over() {
+        let mut g = Game::new(names(2));
+        g.players[P0].stats = PlayerStats { dice_income: 7, dev_cards_bought: 2, trades: 3 };
+        let lens = g.longest_roads();
+        let json = serde_json::to_value(g.view(P1, &all_connected(2), &lens)).unwrap();
+        assert!(json["players"][0]["stats"].is_null(), "hidden during play");
+        g.phase = Phase::GameOver;
+        let json = serde_json::to_value(g.view(P1, &all_connected(2), &lens)).unwrap();
+        assert_eq!(json["players"][0]["stats"], serde_json::json!({ "dice_income": 7, "dev_cards_bought": 2, "trades": 3 }));
+        assert_eq!(json["players"][1]["stats"], serde_json::json!({ "dice_income": 0, "dev_cards_bought": 0, "trades": 0 }));
+    }
+
+    // ------------------------------------------------------------------
     // Volcanoes
     // ------------------------------------------------------------------
 
@@ -4363,5 +4486,32 @@ mod tests {
             }
         }
         assert!(erupted > 30, "only {erupted} of 60 games saw an eruption");
+    }
+}
+
+#[cfg(test)]
+mod log_numbering_tests {
+    use super::*;
+
+    /// The view carries only the last 50 events; `log_start` numbers the first of them so a client can tell
+    /// which lines it already has after the window slides (and after old events are dropped from the front).
+    #[test]
+    fn log_lines_keep_their_numbers_as_the_window_slides() {
+        let mut g = Game::new((0..2).map(|i| format!("P{i}")).collect());
+        let connected = PerPlayer::from_fn(2, |_| true);
+        let me = PlayerId::new(0);
+        let mut last_start = None;
+        for _ in 0..300 {
+            g.log(LogEvent::LongestRoadLost);
+            let lens = g.longest_roads();
+            let v = g.view(me, &connected, &lens);
+            let total = g.log_dropped + g.log.len();
+            assert_eq!(v.log_start + v.log.len(), total, "the window always ends at the newest event");
+            if let Some(prev) = last_start {
+                assert!(v.log_start >= prev, "numbers never go backwards");
+            }
+            last_start = Some(v.log_start);
+        }
+        assert!(g.log_dropped > 0, "the test must push events off the front of the log");
     }
 }

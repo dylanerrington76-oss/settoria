@@ -772,7 +772,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
         <>
           {statsOpen && <GameOver v={v} send={send} />}
           <button className="stats-toggle" onClick={() => setStatsOpen(!statsOpen)}>
-            {statsOpen ? 'Map' : 'Stats'}
+            {statsOpen ? 'Map' : 'Results'}
           </button>
         </>
       )}
@@ -920,48 +920,116 @@ function RollChart({ counts }: { counts: number[] }) {
   );
 }
 
+type EndTab = 'results' | 'stats';
+const END_TABS: { id: EndTab; label: string }[] = [
+  { id: 'results', label: 'Results' },
+  { id: 'stats', label: 'Stats' },
+];
+
 function GameOver({ v, send }: { v: GameView; send: Send }) {
+  const [tab, setTab] = useState<EndTab>('results');
   const winner = v.winner !== null ? v.players[v.winner] : null;
   const ranked = [...v.players].sort((a, b) => (b.vp_total ?? 0) - (a.vp_total ?? 0));
+  const tabs = (
+    <div className="tabs final-tabs" role="tablist" aria-label="Game summary">
+      {END_TABS.map((t) => (
+        <button
+          key={t.id}
+          role="tab"
+          id={`final-tab-${t.id}`}
+          aria-selected={tab === t.id}
+          aria-controls={`final-panel-${t.id}`}
+          className={tab === t.id ? 'on' : ''}
+          onClick={() => setTab(t.id)}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+  const panel = (id: EndTab) => ({
+    role: 'tabpanel',
+    id: `final-panel-${id}`,
+    'aria-labelledby': `final-tab-${id}`,
+    className: tab === id ? 'final-panel' : 'final-panel off',
+  });
+  const borderColor = winner ? winner.color : undefined;
   return (
-    <Modal title={winner ? `${winner.name} wins!` : 'Game over'}>
-      <div className="final-scroll">
-        <table className="final-table" style={{ borderColor: winner ? winner.color : undefined }}>
-          <thead>
-            <tr>
-              <th scope="col">Player</th>
-              <th scope="col">Total points</th>
-              <th scope="col">Settlements</th>
-              <th scope="col">Cities</th>
-              <th scope="col">Dev cards</th>
-              <th scope="col">Largest army</th>
-              <th scope="col">Longest road</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ranked.map((p) => {
-              const b = p.vp_breakdown;
-              return (
-                <tr key={p.id}>
-                  <th scope="row">
-                    <div className="who">
-                      <Chip color={p.color} />
-                      <span>{p.name}</span>
-                    </div>
-                  </th>
-                  <td className="total">{p.vp_total ?? p.vp}</td>
-                  <td>{b?.settlements ?? '–'}</td>
-                  <td>{b?.cities ?? '–'}</td>
-                  <td>{b?.dev_cards ?? '–'}</td>
-                  <td>{b?.largest_army ?? '–'}</td>
-                  <td>{b?.longest_road ?? '–'}</td>
+    <Modal title={winner ? `${winner.name} wins!` : 'Game over'} above={tabs}>
+      {/* Both panels share one grid cell, so the dialog keeps the size of the taller one when switching tabs. */}
+      <div className="final-panels">
+        <div {...panel('results')}>
+          <div className="final-scroll">
+            <table className="final-table" style={{ borderColor }}>
+              <thead>
+                <tr>
+                  <th scope="col">Player</th>
+                  <th scope="col">Total points</th>
+                  <th scope="col">Settlements</th>
+                  <th scope="col">Cities</th>
+                  <th scope="col">Dev cards</th>
+                  <th scope="col">Largest army</th>
+                  <th scope="col">Longest road</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              </thead>
+              <tbody>
+                {ranked.map((p) => {
+                  const b = p.vp_breakdown;
+                  return (
+                    <tr key={p.id}>
+                      <th scope="row">
+                        <div className="who">
+                          <Chip color={p.color} />
+                          <span>{p.name}</span>
+                        </div>
+                      </th>
+                      <td className="total">{p.vp_total ?? p.vp}</td>
+                      <td>{b?.settlements ?? '–'}</td>
+                      <td>{b?.cities ?? '–'}</td>
+                      <td>{b?.dev_cards ?? '–'}</td>
+                      <td>{b?.largest_army ?? '–'}</td>
+                      <td>{b?.longest_road ?? '–'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <RollChart counts={v.roll_counts} />
+        </div>
+        <div {...panel('stats')}>
+          <div className="final-scroll">
+            <table className="final-table" style={{ borderColor }}>
+              <thead>
+                <tr>
+                  <th scope="col">Player</th>
+                  <th scope="col">Dice income</th>
+                  <th scope="col">Dev cards</th>
+                  <th scope="col">Trades</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ranked.map((p) => (
+                  <tr key={p.id}>
+                    <th scope="row">
+                      <div className="who">
+                        <Chip color={p.color} />
+                        <span>{p.name}</span>
+                      </div>
+                    </th>
+                    <td>{p.stats?.dice_income ?? '–'}</td>
+                    <td>{p.stats?.dev_cards_bought ?? '–'}</td>
+                    <td>{p.stats?.trades ?? '–'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="final-note">
+            Dice income: resource cards received from dice rolls, volcano picks included. Dev cards: bought from the deck. Trades: completed trades with other players.
+          </p>
+        </div>
       </div>
-      <RollChart counts={v.roll_counts} />
       <div className="modal-actions">
         <button className="primary" onClick={() => send({ type: 'reset' })}>
           Back to lobby
