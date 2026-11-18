@@ -278,7 +278,7 @@ struct Clock {
 
 /// How many of the newest log events a view carries. A client that is sent patches keeps the same window
 /// (`LOG_WINDOW` in web/src/patch.ts), so the two must agree.
-pub const LOG_WINDOW: usize = 50;
+pub const LOG_WINDOW: usize = 25;
 
 /// The countdown as clients see it. `remaining_ms` is relative to the moment the
 /// view was built, so clients need no synchronised clock.
@@ -342,11 +342,66 @@ pub enum Reply {
     Proposer,
     Pending,
     Accepted,
+    /// The offer is a bank-rate deal for this player, who owns the harbour that gives it (see
+    /// `bank_rate_deal`), so they cannot accept it. They can still decline it.
+    Blocked,
     Declined,
 }
 
 /// The most player offers one proposer may have open at once.
 pub const MAX_OPEN_TRADES: usize = 4;
+
+/// Cards of one resource handed to other players in trades during one turn that lock that resource out of
+/// Monopoly for the rest of the turn.
+pub const MONOPOLY_LOCK_CARDS: u8 = 2;
+
+/// Why a harbour owner's offer or acceptance is refused.
+const HARBOUR_DEAL_MSG: &str = "A harbour owner can't make bank-rate deals with players (3 for 1 with a 3:1 harbour, 2 for 1 with a matching 2:1 harbour, or several of those at once). Trade with the bank instead";
+
+/// Whether giving `give` and getting `get_total` cards back is nothing but bank trades done with another
+/// player. `any` is whether the giver owns a 3:1 harbour and `special` which resources they own a 2:1 harbour
+/// for. Every resource given must be a whole number of 3s (with `any`) or 2s (with its own harbour), each such
+/// group buying one card, and the groups must add up to exactly `get_total`. So 3 lumber for 1 brick and
+/// 6 lumber for 2 brick are bank deals with a 3:1 harbour, but 3 lumber + 1 ore for 1 brick, 3 lumber for 2 brick,
+/// and a 4:1 deal are not. With no harbour nothing is.
+pub fn bank_rate_deal(give: &Res, get_total: u32, any: bool, special: &ByResource<bool>) -> bool {
+    if get_total == 0 || (!any && !special.0.iter().any(|&s| s)) {
+        return false;
+    }
+    // `reach[k]`: the cards bought if the resources looked at so far are split into harbour groups so that k
+    // cards come back.
+    let size = give.total() as usize / 2 + 1;
+    let mut reach = vec![false; size + 1];
+    reach[0] = true;
+    for r in Resource::ALL {
+        let n = give[r] as usize;
+        if n == 0 {
+            continue;
+        }
+        let mut options = vec![];
+        if special[r] && n % 2 == 0 {
+            options.push(n / 2);
+        }
+        if any && n % 3 == 0 {
+            options.push(n / 3);
+        }
+        if options.is_empty() {
+            return false; // a resource that doesn't fit a harbour ratio is not a bank deal
+        }
+        let mut next = vec![false; size + 1];
+        for (have, &ok) in reach.iter().enumerate() {
+            if ok {
+                for &add in &options {
+                    if have + add <= size {
+                        next[have + add] = true;
+                    }
+                }
+            }
+        }
+        reach = next;
+    }
+    (get_total as usize) <= size && reach[get_total as usize]
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Trade {
@@ -433,6 +488,10 @@ pub struct Game {
     /// (so 11 entries, for 2 through 12). Kept here rather than read back from the log, which is capped.
     pub roll_counts: [u32; 11],
     pub dev_played: bool,
+    /// Cards of each resource the current player has handed to other players in completed trades this turn.
+    /// Two or more of a resource lock it out of Monopoly until the turn ends (`MONOPOLY_LOCK_CARDS`).
+    /// Bank trades don't count. Cleared when the turn ends.
+    pub traded_away: Res,
     pub setup_idx: usize,
     pub setup_vertex: Option<usize>,
     pub discards: Vec<(PlayerId, u8)>,
@@ -538,6 +597,15 @@ pub struct PlayerView {
     pub stats: Option<PlayerStats>,
 }
 
+/// Which harbours a player owns (see `Game::harbours`).
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HarbourView {
+    /// A 3:1 harbour for any resource.
+    pub any: bool,
+    /// A 2:1 harbour, for each resource.
+    pub resource: ByResource<bool>,
+}
+
 #[derive(Serialize)]
 pub struct GameView<'a> {
     pub you: PlayerId,
@@ -565,6 +633,11 @@ pub struct GameView<'a> {
     pub deck_left: usize,
     pub dev_played: bool,
     pub ratios: ByResource<u8>,
+    /// The harbours you own, for the trade dialog: players can't be offered bank-rate deals that these give.
+    pub harbours: HarbourView,
+    /// Resources you can't play Monopoly on until your turn ends, because you gave away
+    /// `MONOPOLY_LOCK_CARDS` or more of them to other players this turn. All false when it isn't your turn.
+    pub monopoly_locked: ByResource<bool>,
     pub setup_needs: Option<&'static str>,
     pub discards: &'a [(PlayerId, u8)],
     pub steal_candidates: &'a [PlayerId],
@@ -715,6 +788,7 @@ impl Game {
             dice: None,
             roll_counts: [0; 11],
             dev_played: false,
+            traded_away: Res::ZERO,
             setup_idx: 0,
             setup_vertex: None,
             discards: vec![],
@@ -962,24 +1036,49 @@ impl Game {
         }
     }
 
+    /// Whether `p` has a settlement or city on a harbour of this kind: `None` for 3:1 any resource,
+    /// `Some(r)` for the 2:1 harbour of `r`.
+    fn owns_harbour(&self, p: PlayerId, kind: Option<Resource>) -> bool {
+        self.board.ports.iter().any(|port| {
+            port.resource == kind
+                && [port.a, port.b]
+                    .iter()
+                    .any(|&v| matches!(self.buildings[v], Some(b) if b.owner == p))
+        })
+    }
+
+    /// The harbours `p` owns.
+    pub fn harbours(&self, p: PlayerId) -> HarbourView {
+        HarbourView {
+            any: self.owns_harbour(p, None),
+            resource: ByResource::from_fn(|r| self.owns_harbour(p, Some(r))),
+        }
+    }
+
     /// Best trade ratio `p` has for giving `res` to the bank: the base ratio from the
     /// settings (4 by default), improved by harbours to 3 or 2 where that is better.
     pub fn ratio(&self, p: PlayerId, res: Resource) -> u8 {
         let mut r = self.settings.bank_ratio;
-        for port in &self.board.ports {
-            let owned = [port.a, port.b]
-                .iter()
-                .any(|&v| matches!(self.buildings[v], Some(b) if b.owner == p));
-            if !owned {
-                continue;
-            }
-            match port.resource {
-                None => r = r.min(3),
-                Some(x) if x == res => r = r.min(2),
-                _ => {}
-            }
+        if self.owns_harbour(p, None) {
+            r = r.min(3);
+        }
+        if self.owns_harbour(p, Some(res)) {
+            r = r.min(2);
         }
         r
+    }
+
+    /// Whether `p` handing `give` to another player for `get` would be a bank-rate deal that one of `p`'s
+    /// harbours makes (see `bank_rate_deal`). Harbour owners must use the bank for those.
+    pub fn bank_rate_deal(&self, p: PlayerId, give: &Res, get: &Res) -> bool {
+        let h = self.harbours(p);
+        bank_rate_deal(give, get.total(), h.any, &h.resource)
+    }
+
+    /// Whether `r` is locked out of Monopoly for the current player: they gave away `MONOPOLY_LOCK_CARDS` or
+    /// more of it to other players in trades this turn.
+    pub fn monopoly_locked(&self, r: Resource) -> bool {
+        self.traded_away[r] >= MONOPOLY_LOCK_CARDS
     }
 
     pub fn longest_road(&self, p: PlayerId) -> usize {
@@ -1778,6 +1877,13 @@ impl Game {
 
     fn do_monopoly(&mut self, p: PlayerId, r: Resource) -> Result<(), String> {
         self.check_dev_play(p, DevCard::Monopoly)?;
+        if self.monopoly_locked(r) {
+            return Err(format!(
+                "You gave away {} {} in trades this turn, so you can't play Monopoly on it until your next turn",
+                self.traded_away[r],
+                r.name()
+            ));
+        }
         self.use_dev(p, DevCard::Monopoly);
         let mut taken = 0u32;
         for o in PlayerId::range(self.n) {
@@ -1829,13 +1935,22 @@ impl Game {
         if !self.players[p].hand.covers(&give) {
             return Err("You don't have those cards".into());
         }
+        if self.bank_rate_deal(p, &give, &want) {
+            return Err(HARBOUR_DEAL_MSG.into());
+        }
         if self.trades.iter().any(|t| t.give == give && t.want == want) {
             return Err("You already have that offer open".into());
         }
         if self.trades.len() >= MAX_OPEN_TRADES {
             return Err(format!("You can have at most {MAX_OPEN_TRADES} offers open at once"));
         }
-        let mut replies = PerPlayer::from_fn(self.n, |_| Reply::Pending);
+        let mut replies = PerPlayer::from_fn(self.n, |q| {
+            if self.bank_rate_deal(q, &want, &give) {
+                Reply::Blocked
+            } else {
+                Reply::Pending
+            }
+        });
         replies[p] = Reply::Proposer;
         let id = self.next_trade_id;
         self.next_trade_id += 1;
@@ -1852,14 +1967,27 @@ impl Game {
 
     fn do_respond_trade(&mut self, p: PlayerId, id: u32, accept: bool) -> Result<(), String> {
         let hand = self.players[p].hand;
-        let t = self.trades.iter_mut().find(|t| t.id == id).ok_or("That offer is no longer open")?;
-        if t.from == p {
+        let (from, give, want) = self
+            .trades
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| (t.from, t.give, t.want))
+            .ok_or("That offer is no longer open")?;
+        if from == p {
             return Err("You proposed this trade".into());
         }
-        if accept && !hand.covers(&t.want) {
-            return Err("You don't have the cards to accept".into());
+        if accept {
+            if !hand.covers(&want) {
+                return Err("You don't have the cards to accept".into());
+            }
+            // `p` would hand over `want` and get `give`.
+            if self.bank_rate_deal(p, &want, &give) {
+                return Err(HARBOUR_DEAL_MSG.into());
+            }
         }
-        t.replies[p] = if accept { Reply::Accepted } else { Reply::Declined };
+        if let Some(t) = self.trades.iter_mut().find(|t| t.id == id) {
+            t.replies[p] = if accept { Reply::Accepted } else { Reply::Declined };
+        }
         Ok(())
     }
 
@@ -1876,7 +2004,11 @@ impl Game {
         if !self.players[p].hand.covers(&t.give) || !self.players[with].hand.covers(&t.want) {
             return Err("One of you no longer has the cards for this trade".into());
         }
+        if self.bank_rate_deal(p, &t.give, &t.want) || self.bank_rate_deal(with, &t.want, &t.give) {
+            return Err(HARBOUR_DEAL_MSG.into());
+        }
         for r in Resource::ALL {
+            self.traded_away[r] = self.traded_away[r].saturating_add(t.give[r]);
             self.players[p].hand[r] = self.players[p].hand[r] - t.give[r] + t.want[r];
             self.players[with].hand[r] = self.players[with].hand[r] + t.give[r] - t.want[r];
         }
@@ -1908,15 +2040,19 @@ impl Game {
             self.trades.clear();
             return;
         }
+        // The proposer may have built on a harbour since opening an offer that it now turns into a bank deal.
+        let mut trades = std::mem::take(&mut self.trades);
+        trades.retain(|t| !self.bank_rate_deal(t.from, &t.give, &t.want));
         let players = &self.players;
-        self.trades.retain(|t| players[t.from].hand.covers(&t.give));
-        for t in &mut self.trades {
+        for t in &mut trades {
             for q in PlayerId::range(players.len()) {
                 if t.replies[q] == Reply::Accepted && !players[q].hand.covers(&t.want) {
                     t.replies[q] = Reply::Pending;
                 }
             }
         }
+        // (Blocked replies are set when an offer opens: harbours can only change on their owner's own turn.)
+        self.trades = trades;
     }
 
     fn do_end_turn(&mut self) -> Result<(), String> {
@@ -1931,6 +2067,7 @@ impl Game {
         }
         self.trades.clear();
         self.dev_played = false;
+        self.traded_away = Res::ZERO;
         self.rolled = false;
         self.dice = None;
         self.current = self.next_player(p);
@@ -2181,6 +2318,8 @@ impl Game {
             deck_left: self.deck.len(),
             dev_played: self.dev_played,
             ratios: ByResource::from_fn(|r| self.ratio(you, r)),
+            harbours: self.harbours(you),
+            monopoly_locked: ByResource::from_fn(|r| you == self.current && self.monopoly_locked(r)),
             setup_needs: if self.phase == Phase::Setup {
                 Some(if self.setup_vertex.is_some() { "road" } else { "settlement" })
             } else {
@@ -2472,6 +2611,7 @@ mod tests {
             for t in &g.trades {
                 assert_eq!(t.from, g.current);
                 assert!(g.players[t.from].hand.covers(&t.give), "proposer cannot pay for an open offer");
+                assert!(!g.bank_rate_deal(t.from, &t.give, &t.want), "an open offer is a bank deal for its proposer");
                 for q in PlayerId::range(g.n) {
                     if t.replies[q] == Reply::Accepted {
                         assert!(g.players[q].hand.covers(&t.want), "an accepter cannot pay");
@@ -3224,6 +3364,187 @@ mod tests {
         g.apply(P0, Action::BankTrade { give: Resource::Brick, get: Resource::Ore }).unwrap();
         assert_eq!(g.trades.len(), 1);
         assert_eq!(g.trades[0].give, Res::new(0, 1, 0, 0, 0));
+    }
+
+    /// Give `p` a settlement on a harbour of this kind (`None` = 3:1).
+    fn give_harbour(g: &mut Game, p: PlayerId, kind: Option<Resource>) {
+        let port = g
+            .board
+            .ports
+            .iter()
+            .find(|port| port.resource == kind)
+            .expect("the standard board has this harbour")
+            .clone();
+        g.buildings[port.a] = Some(Building { owner: p, city: false });
+    }
+
+    fn offer(g: &mut Game, p: PlayerId, give: Res, want: Res) -> Result<(), String> {
+        g.apply(p, Action::OfferTrade { give, want })
+    }
+
+    #[test]
+    fn bank_rate_deals_are_recognised() {
+        let none = ByResource::splat(false);
+        let lumber = ByResource::from_fn(|r| r == Resource::Lumber);
+        let deal = |give: Res, get: u32, any: bool, special: &ByResource<bool>| bank_rate_deal(&give, get, any, special);
+        // no harbour: nothing is a bank deal, whatever the ratio
+        assert!(!deal(Res::new(4, 0, 0, 0, 0), 1, false, &none));
+        assert!(!deal(Res::new(3, 0, 0, 0, 0), 1, false, &none));
+        // 3:1 harbour: 3 for 1 and its multiples
+        assert!(deal(Res::new(3, 0, 0, 0, 0), 1, true, &none));
+        assert!(deal(Res::new(6, 0, 0, 0, 0), 2, true, &none));
+        assert!(deal(Res::new(3, 3, 0, 0, 0), 2, true, &none), "two 3:1 deals in one");
+        assert!(!deal(Res::new(6, 0, 0, 0, 0), 1, true, &none), "6 for 1 is worse than the bank, so it is allowed");
+        assert!(!deal(Res::new(6, 0, 0, 0, 0), 3, true, &none), "6 for 3 is better than the bank");
+        assert!(!deal(Res::new(3, 0, 0, 0, 0), 2, true, &none));
+        assert!(!deal(Res::new(2, 0, 0, 0, 0), 1, true, &none));
+        assert!(!deal(Res::new(4, 0, 0, 0, 0), 1, true, &none));
+        assert!(!deal(Res::new(3, 1, 0, 0, 0), 1, true, &none), "a leftover card makes it a different deal");
+        assert!(!deal(Res::new(2, 1, 0, 0, 0), 1, true, &none), "mixed cards are not a bank deal");
+        assert!(!deal(Res::ZERO, 1, true, &none));
+        assert!(!deal(Res::new(3, 0, 0, 0, 0), 0, true, &none));
+        // 2:1 harbour for lumber only
+        assert!(deal(Res::new(0, 2, 0, 0, 0), 1, false, &lumber));
+        assert!(deal(Res::new(0, 4, 0, 0, 0), 2, false, &lumber));
+        assert!(!deal(Res::new(2, 0, 0, 0, 0), 1, false, &lumber), "a 2:1 harbour only covers its own resource");
+        assert!(!deal(Res::new(0, 3, 0, 0, 0), 1, false, &lumber));
+        assert!(!deal(Res::new(0, 1, 0, 0, 0), 1, false, &lumber));
+        // both: lumber counts in 2s or 3s, other resources in 3s
+        assert!(deal(Res::new(0, 6, 0, 0, 0), 2, true, &lumber), "as 3:1");
+        assert!(deal(Res::new(0, 6, 0, 0, 0), 3, true, &lumber), "as 2:1");
+        assert!(deal(Res::new(3, 2, 0, 0, 0), 2, true, &lumber), "one 3:1 and one 2:1");
+        assert!(!deal(Res::new(2, 2, 0, 0, 0), 2, true, &lumber), "brick has no 2:1 and 2 is not a multiple of 3");
+        assert!(!deal(Res::new(0, 6, 0, 0, 0), 4, true, &lumber));
+    }
+
+    #[test]
+    fn a_3_to_1_harbour_owner_cannot_offer_players_a_bank_deal() {
+        let mut g = trading_game();
+        give_harbour(&mut g, P0, None);
+        g.players[P0].hand = Res::new(9, 3, 0, 0, 0);
+        assert!(offer(&mut g, P0, Res::new(3, 0, 0, 0, 0), Res::new(0, 0, 1, 0, 0)).is_err(), "3 for 1");
+        assert!(offer(&mut g, P0, Res::new(6, 0, 0, 0, 0), Res::new(0, 0, 1, 1, 0)).is_err(), "6 for 2");
+        assert!(g.trades.is_empty());
+        // everything that is not exactly a bank deal is still allowed
+        offer(&mut g, P0, Res::new(2, 0, 0, 0, 0), Res::new(0, 0, 1, 0, 0)).unwrap();
+        offer(&mut g, P0, Res::new(4, 0, 0, 0, 0), Res::new(0, 0, 1, 0, 0)).unwrap();
+        offer(&mut g, P0, Res::new(3, 0, 0, 0, 0), Res::new(0, 0, 2, 0, 0)).unwrap();
+        offer(&mut g, P0, Res::new(2, 1, 0, 0, 0), Res::new(0, 0, 1, 0, 0)).unwrap();
+        assert_eq!(g.trades.len(), 4);
+    }
+
+    #[test]
+    fn a_2_to_1_harbour_only_blocks_its_own_resource() {
+        let mut g = trading_game();
+        give_harbour(&mut g, P0, Some(Resource::Brick));
+        g.players[P0].hand = Res::new(4, 4, 0, 0, 0);
+        assert!(offer(&mut g, P0, Res::new(2, 0, 0, 0, 0), Res::new(0, 0, 1, 0, 0)).is_err(), "2 brick for 1");
+        assert!(offer(&mut g, P0, Res::new(4, 0, 0, 0, 0), Res::new(0, 0, 1, 1, 0)).is_err(), "4 brick for 2");
+        offer(&mut g, P0, Res::new(0, 2, 0, 0, 0), Res::new(0, 0, 1, 0, 0)).unwrap();
+        offer(&mut g, P0, Res::new(3, 0, 0, 0, 0), Res::new(0, 0, 1, 0, 0)).unwrap();
+        assert_eq!(g.trades.len(), 2);
+    }
+
+    #[test]
+    fn without_a_harbour_player_trades_are_unrestricted() {
+        let mut g = trading_game();
+        g.players[P0].hand = Res::new(4, 3, 2, 0, 0);
+        offer(&mut g, P0, Res::new(4, 0, 0, 0, 0), Res::new(0, 0, 0, 1, 0)).unwrap();
+        offer(&mut g, P0, Res::new(0, 3, 0, 0, 0), Res::new(0, 0, 0, 1, 0)).unwrap();
+        offer(&mut g, P0, Res::new(0, 0, 2, 0, 0), Res::new(0, 0, 0, 0, 1)).unwrap();
+    }
+
+    #[test]
+    fn a_harbour_owner_cannot_accept_a_bank_deal_but_others_can() {
+        let mut g = trading_game();
+        give_harbour(&mut g, P1, None); // player 1: 3:1
+        g.players[P0].hand = Res::new(0, 0, 1, 0, 0);
+        g.players[P1].hand = Res::new(3, 0, 0, 0, 0);
+        g.players[P2].hand = Res::new(3, 0, 0, 0, 0);
+        // player 0 offers 1 ore for 3 brick: for players 1 (3:1) that is a bank deal, for player 2 it is not
+        offer(&mut g, P0, Res::new(0, 0, 1, 0, 0), Res::new(3, 0, 0, 0, 0)).unwrap();
+        assert_eq!(g.trades[0].replies[P1], Reply::Blocked);
+        assert_eq!(g.trades[0].replies[P2], Reply::Pending);
+        assert_eq!(g.trades[0].replies[P0], Reply::Proposer);
+        assert!(g.apply(P1, Action::RespondTrade { id: 0, accept: true }).is_err());
+        assert_eq!(g.trades[0].replies[P1], Reply::Blocked, "a refused answer changes nothing");
+        g.apply(P2, Action::RespondTrade { id: 0, accept: true }).unwrap();
+        assert!(g.apply(P0, Action::ConfirmTrade { id: 0, with: P1 }).is_err());
+        g.apply(P0, Action::ConfirmTrade { id: 0, with: P2 }).unwrap();
+        assert_eq!(g.players[P0].hand, Res::new(3, 0, 0, 0, 0));
+    }
+
+    #[test]
+    fn a_blocked_player_can_still_decline() {
+        let mut g = trading_game();
+        give_harbour(&mut g, P1, Some(Resource::Ore));
+        g.players[P0].hand = Res::new(1, 0, 0, 0, 0);
+        g.players[P1].hand = Res::new(0, 0, 2, 0, 0);
+        offer(&mut g, P0, Res::new(1, 0, 0, 0, 0), Res::new(0, 0, 2, 0, 0)).unwrap(); // player 1 would give 2 ore for 1 brick
+        assert_eq!(g.trades[0].replies[P1], Reply::Blocked);
+        g.apply(P1, Action::RespondTrade { id: 0, accept: false }).unwrap();
+        assert_eq!(g.trades[0].replies[P1], Reply::Declined);
+    }
+
+    #[test]
+    fn building_on_a_harbour_withdraws_offers_that_become_bank_deals() {
+        let mut g = trading_game();
+        g.players[P0].hand = Res::new(3, 0, 0, 0, 0);
+        offer(&mut g, P0, Res::new(3, 0, 0, 0, 0), Res::new(0, 0, 1, 0, 0)).unwrap();
+        offer(&mut g, P0, Res::new(2, 0, 0, 0, 0), Res::new(0, 0, 1, 0, 0)).unwrap();
+        give_harbour(&mut g, P0, None);
+        g.prune_trades();
+        assert_eq!(g.trades.len(), 1);
+        assert_eq!(g.trades[0].give, Res::new(2, 0, 0, 0, 0));
+    }
+
+    #[test]
+    fn giving_away_two_cards_in_trades_locks_monopoly_on_them_for_the_turn() {
+        let mut g = trading_game();
+        g.players[P0].hand = Res::new(3, 0, 0, 0, 0);
+        g.players[P0].dev[DevCard::Monopoly] = 1;
+        g.players[P1].hand = Res::new(0, 2, 2, 0, 0);
+        offer(&mut g, P0, Res::new(2, 0, 0, 0, 0), Res::new(0, 1, 0, 0, 0)).unwrap();
+        g.apply(P1, Action::RespondTrade { id: 0, accept: true }).unwrap();
+        g.apply(P0, Action::ConfirmTrade { id: 0, with: P1 }).unwrap();
+        assert!(g.monopoly_locked(Resource::Brick));
+        assert!(!g.monopoly_locked(Resource::Lumber), "receiving cards doesn't lock them");
+        let v = g.view(P0, &all_connected(3), &g.longest_roads());
+        assert_eq!(v.monopoly_locked, ByResource::from_fn(|r| r == Resource::Brick));
+        let v = g.view(P1, &all_connected(3), &g.longest_roads());
+        assert_eq!(v.monopoly_locked, ByResource::splat(false), "only the player whose turn it is has a lock");
+        let err = g.apply(P0, Action::PlayMonopoly { resource: Resource::Brick }).unwrap_err();
+        assert!(err.contains("Monopoly"), "{err}");
+        assert_eq!(g.players[P0].dev[DevCard::Monopoly], 1, "a refused Monopoly doesn't use the card");
+        assert!(!g.dev_played);
+        // another resource is fine
+        g.apply(P0, Action::PlayMonopoly { resource: Resource::Ore }).unwrap();
+        // the lock ends with the turn
+        g.apply(P0, Action::EndTurn).unwrap();
+        assert_eq!(g.traded_away, Res::ZERO);
+        assert!(!g.monopoly_locked(Resource::Brick));
+    }
+
+    #[test]
+    fn small_and_bank_trades_do_not_lock_monopoly_but_a_running_total_of_two_does() {
+        let mut g = trading_game();
+        g.players[P0].hand = Res::new(8, 0, 0, 0, 0);
+        g.players[P0].dev[DevCard::Monopoly] = 1;
+        g.players[P1].hand = Res::new(0, 2, 2, 0, 0);
+        // trading the bank 4 brick doesn't count
+        g.apply(P0, Action::BankTrade { give: Resource::Brick, get: Resource::Wool }).unwrap();
+        assert!(!g.monopoly_locked(Resource::Brick));
+        // one brick to a player is under the limit
+        offer(&mut g, P0, Res::new(1, 0, 0, 0, 0), Res::new(0, 1, 0, 0, 0)).unwrap();
+        g.apply(P1, Action::RespondTrade { id: 0, accept: true }).unwrap();
+        g.apply(P0, Action::ConfirmTrade { id: 0, with: P1 }).unwrap();
+        assert!(!g.monopoly_locked(Resource::Brick));
+        // a second one makes two in all
+        offer(&mut g, P0, Res::new(1, 0, 0, 0, 0), Res::new(0, 0, 1, 0, 0)).unwrap();
+        g.apply(P1, Action::RespondTrade { id: 1, accept: true }).unwrap();
+        g.apply(P0, Action::ConfirmTrade { id: 1, with: P1 }).unwrap();
+        assert!(g.monopoly_locked(Resource::Brick));
+        assert!(g.apply(P0, Action::PlayMonopoly { resource: Resource::Brick }).is_err());
     }
 
     #[test]

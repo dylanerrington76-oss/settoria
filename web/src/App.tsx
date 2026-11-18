@@ -6,6 +6,7 @@ import Footer from './Footer';
 import MapEditor from './MapEditor';
 import { MobileTable, useIsPhone } from './Mobile';
 import { MAX_FILES_AT_ONCE, MAX_MAP_BYTES, UploadResult, uploadMapFile } from './mapUpload';
+import { formatPostgame, postgamePercent } from './postgame';
 import { GameSettingsPanel, settingsDifferences } from './GameSettings';
 import {
   BankRow,
@@ -42,8 +43,11 @@ import {
   MapInfo,
   MAX_PLAYERS,
   MIN_PLAYERS,
+  MONOPOLY_LOCK_CARDS,
   PALETTE,
   Res,
+  RES_IDX,
+  RES_NAMES,
   Settings,
   TIMER_MODES,
   TimerMode,
@@ -755,8 +759,16 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
       {dialog === 'monopoly' && (
         <PickResourceDialog
           title="Monopoly"
-          help="Every other player hands you all of the resource you name."
+          help={
+            'Every other player hands you all of the resource you name.' +
+            (v.monopoly_locked.some(Boolean)
+              ? ` You gave away ${MONOPOLY_LOCK_CARDS} or more of ${RES_IDX.filter((i) => v.monopoly_locked[i])
+                  .map((i) => RES_NAMES[i])
+                  .join(' and ')} in trades this turn, so you can't pick ${v.monopoly_locked.filter(Boolean).length === 1 ? 'it' : 'them'} until your next turn.`
+              : '')
+          }
           count={1}
+          blocked={(i) => v.monopoly_locked[i]}
           onClose={() => setDialog(null)}
           onPick={(p) => {
             act({ type: 'play_monopoly', resource: p[0] });
@@ -954,6 +966,14 @@ function GameOver({ v, send }: { v: GameView; send: Send }) {
     className: tab === id ? 'final-panel' : 'final-panel off',
   });
   const borderColor = winner ? winner.color : undefined;
+  // Postgame% by player id; stays empty if the stats have not arrived (they come with the game-over view).
+  const postgame: Record<number, number> = {};
+  if (v.players.every((p) => p.stats)) {
+    const shares = postgamePercent(v.players.map((p) => p.stats!.dice_income));
+    v.players.forEach((p, i) => {
+      postgame[p.id] = shares[i];
+    });
+  }
   return (
     <Modal title={winner ? `${winner.name} wins!` : 'Game over'} above={tabs}>
       {/* Both panels share one grid cell, so the dialog keeps the size of the taller one when switching tabs. */}
@@ -1006,6 +1026,7 @@ function GameOver({ v, send }: { v: GameView; send: Send }) {
                   <th scope="col">Dice income</th>
                   <th scope="col">Dev cards</th>
                   <th scope="col">Trades</th>
+                  <th scope="col">Postgame%</th>
                 </tr>
               </thead>
               <tbody>
@@ -1020,13 +1041,14 @@ function GameOver({ v, send }: { v: GameView; send: Send }) {
                     <td>{p.stats?.dice_income ?? '–'}</td>
                     <td>{p.stats?.dev_cards_bought ?? '–'}</td>
                     <td>{p.stats?.trades ?? '–'}</td>
+                    <td>{postgame[p.id] !== undefined ? formatPostgame(postgame[p.id]) : '–'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <p className="final-note">
-            Dice income: resource cards received from dice rolls, volcano picks included. Dev cards: bought from the deck. Trades: completed trades with other players.
+            Dice income: resource cards received from dice rolls, volcano picks included. Dev cards: bought from the deck. Trades: completed trades with other players. Postgame%: each player's chance of winning judged from dice income alone, relative to the player with the most; the column adds up to 100%.
           </p>
         </div>
       </div>

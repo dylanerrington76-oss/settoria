@@ -2,7 +2,7 @@
 // (see Board.tsx), so a map looks in the editor the way it will in a game. What is new is the red and black
 // stripe: a hex or harbour drawn in stripes is one the game deals at random.
 import { memo } from 'react';
-import { Glyph, shade } from './art';
+import { Glyph, PortLabel, shade } from './art';
 import { ART, RES_OF, STYLE, VolcanoArt, hexPoints } from './Board';
 import { EdHex, PortKind, S } from './mapModel';
 import type { Terrain } from './types';
@@ -144,24 +144,8 @@ export const Ship = memo(function Ship({ kind, uid }: { kind: PortKind | null; u
         <text x="0.5" y="6" textAnchor="middle" fontSize="30" fontWeight="800" fill="#fff" stroke="#111" strokeWidth="3.2" paintOrder="stroke" strokeLinejoin="round">
           ?
         </text>
-      ) : kind === 'any' ? (
-        <>
-          <text x="0.5" y="-1" textAnchor="middle" fontSize="26" fontWeight="800" fill="#5c2626">
-            ?
-          </text>
-          <text x="0.5" y="14" textAnchor="middle" fontSize="12.5" fontWeight="600" fill="#7a4a4a">
-            3:1
-          </text>
-        </>
       ) : (
-        <>
-          <g transform="translate(-10.5 -17) scale(0.55)">
-            <Glyph res={RES_OF_KIND[kind]} fill="#5c2626" fill2="#5c2626" />
-          </g>
-          <text x="0.5" y="14" textAnchor="middle" fontSize="12.5" fontWeight="600" fill="#7a4a4a">
-            2:1
-          </text>
-        </>
+        <PortLabel res={kind === 'any' ? null : RES_OF_KIND[kind]} />
       )}
     </g>
   );

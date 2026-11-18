@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+### [v2026.11.18] 
+new fairness rules
+- Updated Port desgin
+- Harbour owners can no longer make bank-rate deals with players
+- Banned trade and mono
+
 ### [v2026.11.16]
 After a trade, the Give resource now stays selected, so repeat trades only need a new Get pick.
 

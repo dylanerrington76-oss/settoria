@@ -292,7 +292,8 @@ export interface PlayerView {
   /** Set together with `vp_total`, once the game is over. */
   stats: PlayerStats | null;
 }
-export type Reply = 'proposer' | 'pending' | 'accepted' | 'declined';
+/** `blocked`: the offer is a bank-rate deal for this player's own harbour, so they can't accept it (only decline). */
+export type Reply = 'proposer' | 'pending' | 'accepted' | 'blocked' | 'declined';
 /** The most offers one player may have open at once (MAX_OPEN_TRADES in src/game.rs). */
 export const MAX_OPEN_TRADES = 4;
 /** Seconds a bank trade or a completed player trade adds to the turn clock (BONUS_SECS in src/game.rs). */
@@ -393,6 +394,10 @@ export interface GameView {
   deck_left: number;
   dev_played: boolean;
   ratios: [number, number, number, number, number];
+  /** The harbours you own: players can't be offered the bank-rate deals these give (see `bankRateDeal`). */
+  harbours: Harbours;
+  /** Resources you can't play Monopoly on until your turn ends; none unless it is your turn (MONOPOLY_LOCK_CARDS in src/game.rs). */
+  monopoly_locked: boolean[];
   setup_needs: 'settlement' | 'road' | null;
   discards: [number, number][];
   steal_candidates: number[];
@@ -450,6 +455,40 @@ export type ServerMsg =
   | { type: 'error'; message: string; code?: string };
 
 export const covers = (have: Res, need: Res): boolean => need.every((n, i) => have[i] >= n);
+
+/** Giving this many cards of one resource to other players in one turn locks it out of Monopoly until the turn ends (src/game.rs). */
+export const MONOPOLY_LOCK_CARDS = 2;
+/** Which harbours a player owns: a 3:1 for anything, and a 2:1 for each resource (`HarbourView` in src/game.rs). */
+export interface Harbours {
+  any: boolean;
+  resource: boolean[];
+}
+/**
+ * Whether handing over `give` for `getTotal` cards from another player is nothing but bank trades that these harbours
+ * allow: every resource given is a whole number of 3s (3:1 harbour) or 2s (its own 2:1 harbour), and the groups add up to
+ * `getTotal`. Harbour owners must use the bank for those (`bank_rate_deal` in src/game.rs, which this mirrors).
+ */
+export function bankRateDeal(give: Res, getTotal: number, h: Harbours): boolean {
+  if (getTotal <= 0 || !(h.any || h.resource.some(Boolean))) return false;
+  const size = Math.floor(total(give) / 2) + 1;
+  let reach: boolean[] = new Array<boolean>(size + 1).fill(false);
+  reach[0] = true;
+  for (let r = 0; r < give.length; r++) {
+    const n = give[r];
+    if (n === 0) continue;
+    const options: number[] = [];
+    if (h.resource[r] && n % 2 === 0) options.push(n / 2);
+    if (h.any && n % 3 === 0) options.push(n / 3);
+    if (options.length === 0) return false; // a resource that doesn't fit a harbour ratio is not a bank deal
+    const next: boolean[] = new Array<boolean>(size + 1).fill(false);
+    reach.forEach((ok, have) => {
+      if (!ok) return;
+      for (const add of options) if (have + add <= size) next[have + add] = true;
+    });
+    reach = next;
+  }
+  return getTotal <= size && reach[getTotal];
+}
 export const total = (r: readonly number[]): number => r.reduce((a, b) => a + b, 0);
 export const bump = (r: Res, i: number, d: number): Res =>
   r.map((x, j) => (j === i ? x + d : x)) as Res;

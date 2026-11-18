@@ -28,7 +28,7 @@ Normal 120s, Slow 240s; Normal is the default), can change any of the **game rul
 No Rust or Node needed, only Docker with Compose. The image builds the client and the server itself, so it
 doesn't use the prebuilt `web/dist`.
 
-    docker compose up --build            # the game on http://localhost:3000 (add -d to run it in the background)
+    docker compose up --build            # the game on http://localhost:3000
 
 Friends on your network open `http://<this computer's address>:3000`; the lobby shows the right address. The server's
 startup log can't see the host's address from inside the container, so to have it print a usable "Other devices" link

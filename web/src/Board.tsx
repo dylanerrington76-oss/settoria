@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { Glyph, PieceShape, isVeryDark, pieceEdge, shade } from './art';
+import { Glyph, PieceShape, PortLabel, isVeryDark, pieceEdge, shade } from './art';
 import { GameView, Terrain, Vertex } from './types';
 
 const S = 64; // pixels per hex radius (board units are multiples of this)
@@ -407,18 +407,7 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
             <path d="M2 -33 L12 -33 L10 -31 L24 -31 L24 -28 L2 -28Z" fill="#fff" stroke="#d3d8db" strokeWidth="0.8" />
             <path d="M-20 -18 C-26 -4 -24 12 -10 18 C4 23 17 20 21 12 L21 -18 Z" fill="url(#sail)" stroke="#c3c9cc" strokeWidth="1.2" />
             <path d="M-21 -23 H22 V-18 q-3.6 4.6 -7.2 0 q-3.6 4.6 -7.2 0 q-3.6 4.6 -7.2 0 q-3.6 4.6 -7.2 0 q-3.6 4.6 -7.2 0Z" fill="#eba233" stroke="#b46c12" strokeWidth="1" />
-            {p.resource === null ? (
-              <text x="0.5" y="-1" textAnchor="middle" fontSize="26" fontWeight="800" fill="#5c2626">
-                ?
-              </text>
-            ) : (
-              <g transform="translate(-10.5 -17) scale(0.55)">
-                <Glyph res={p.resource} fill="#5c2626" fill2="#5c2626" />
-              </g>
-            )}
-            <text x="0.5" y="14" textAnchor="middle" fontSize="12.5" fontWeight="600" fill="#7a4a4a">
-              {p.resource === null ? '3:1' : '2:1'}
-            </text>
+            <PortLabel res={p.resource} />
           </g>
         </g>
       ))}

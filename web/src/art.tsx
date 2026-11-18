@@ -537,3 +537,30 @@ export function DiscardArrow() {
     </svg>
   );
 }
+/** Fill of a 3:1 harbour's ratio box. */
+export const PORT_ANY_COLOR = '#1a56c4';
+
+/**
+ * What a harbour's sail shows, in the ship's own frame: the resource glyph (or "?" for any) above a box with the
+ * ratio in white. The box is blue for 3:1 and the darker tone of the resource's card colour for 2:1, so a harbour
+ * can be told from afar. `res` is the resource index, or null for a 3:1 harbour.
+ */
+export function PortLabel({ res }: { res: number | null }) {
+  return (
+    <>
+      {res === null ? (
+        <text x="0" y="-0.5" textAnchor="middle" fontSize="19" fontWeight="800" fill="#5c2626">
+          ?
+        </text>
+      ) : (
+        <g transform="translate(-8 -13) scale(0.4)">
+          <Glyph res={res} fill="#5c2626" fill2="#5c2626" />
+        </g>
+      )}
+      <rect x="-14" y="2" width="28" height="12" rx="3.5" fill={res === null ? PORT_ANY_COLOR : TONES[res].edge} />
+      <text x="0" y="11.3" textAnchor="middle" fontSize="10.5" fontWeight="800" fill="#fff">
+        {res === null ? '3:1' : '2:1'}
+      </text>
+    </>
+  );
+}

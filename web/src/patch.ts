@@ -10,7 +10,7 @@ import type { GamePatch, GameView, PatchOp, PatchStep } from './types';
  */
 
 /** How many of the newest log events the view holds: `LOG_WINDOW` in `src/game.rs`. */
-export const LOG_WINDOW = 50;
+export const LOG_WINDOW = 25;
 
 /** The patch doesn't fit the view it was meant for. The cure is to ask the server for the whole view again. */
 export class PatchError extends Error {}

@@ -22,6 +22,7 @@ import {
   COST_DEV,
   COST_ROAD,
   COST_SETTLEMENT,
+  bankRateDeal,
   covers,
   devHelp,
   DEV_NAMES,
@@ -238,7 +239,9 @@ export function TradeModal({
   const open = v.trades.filter((t) => t.from === v.you);
   const duplicate = open.some((t) => t.give.every((n, i) => n === give[i]) && t.want.every((n, i) => n === want[i]));
   const full = open.length >= MAX_OPEN_TRADES;
-  const ok = total(give) > 0 && total(want) > 0 && !clash && !duplicate && !full;
+  // A harbour owner can't offer players what the harbour gives at the bank.
+  const harbourDeal = bankRateDeal(give, total(want), v.harbours);
+  const ok = total(give) > 0 && total(want) > 0 && !clash && !duplicate && !full && !harbourDeal;
   const ratio = bGive === null ? 0 : v.ratios[bGive];
   const bankOk = bGive !== null && bGet !== null && bGive !== bGet && v.hand[bGive] >= ratio && v.bank[bGet] > 0;
   // After a trade the given resource stays selected so repeat trades are one tap; drop it once the hand can't cover another.
@@ -265,6 +268,12 @@ export function TradeModal({
           {clash && <p className="warn">You can't offer and ask for the same resource.</p>}
           {duplicate && !clash && <p className="warn">You already have that offer open.</p>}
           {full && <p className="warn">You can have at most {MAX_OPEN_TRADES} offers open at once.</p>}
+          {harbourDeal && !clash && (
+            <p className="warn">
+              Your harbour gives you that rate at the bank, so you can't offer it to players (3 for 1 with a 3:1 harbour, 2 for 1 with
+              a matching 2:1 one). Use the bank tab.
+            </p>
+          )}
           <p className="muted">
             {open.length > 0 && ` Open offers: ${open.length}/${MAX_OPEN_TRADES}.`}
             {sent && ' Offer sent'}
@@ -315,6 +324,7 @@ export function PickResourceDialog({
   help,
   count,
   bank,
+  blocked,
   onClose,
   onPick,
 }: {
@@ -322,6 +332,8 @@ export function PickResourceDialog({
   help: string;
   count: 1 | 2;
   bank?: Res;
+  /** Resources that can't be picked (the Monopoly lockout). */
+  blocked?: (i: number) => boolean;
   onClose: () => void;
   onPick: (picks: number[]) => void;
 }) {
@@ -335,7 +347,7 @@ export function PickResourceDialog({
   return (
     <Modal title={title} onClose={onClose}>
       <p className="muted">{help}</p>
-      <ResourceButtons selected={null} onPick={add} disabled={bank ? short : undefined} />
+      <ResourceButtons selected={null} onPick={add} disabled={bank || blocked ? (i) => short(i) || !!blocked?.(i) : undefined} />
       <p className="picked">
         {picks.length === 0
           ? 'Nothing chosen yet'
@@ -998,6 +1010,8 @@ function TradeBox({
                     </button>
                   ) : r === 'declined' ? (
                     'declined'
+                  ) : r === 'blocked' ? (
+                    "can't (harbour)"
                   ) : (
                     'thinking…'
                   )}
@@ -1015,6 +1029,14 @@ function TradeBox({
               <button className="primary small" disabled={!canAccept} onClick={() => onRespond(t.id, true)}>
                 {canAccept ? 'Accept' : "Can't afford"}
               </button>
+              <button className="small" onClick={() => onRespond(t.id, false)}>
+                Decline
+              </button>
+            </>
+          )}
+          {myReply === 'blocked' && (
+            <>
+              <span className="muted">Your harbour makes this a bank deal: use the bank instead.</span>
               <button className="small" onClick={() => onRespond(t.id, false)}>
                 Decline
               </button>

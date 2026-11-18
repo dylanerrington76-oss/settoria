@@ -354,7 +354,7 @@ button.stack:disabled { opacity: 1; cursor: default; }
 .trade-line .avatar { width: 26px; height: 26px; }
 .trade-replies { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 8px; font-size: 14px; }
 .reply { display: inline-flex; align-items: center; gap: 6px; }
-.reply.declined { opacity: 0.55; }
+.reply.declined, .reply.blocked { opacity: 0.55; }
 .steal-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; background: var(--cream); padding: 10px 14px; border-radius: 10px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15), 0 8px 24px rgba(0, 30, 60, 0.4); z-index: 4; }
 .steal-bar button { display: inline-flex; gap: 7px; align-items: center; }
 
