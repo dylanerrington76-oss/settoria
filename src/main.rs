@@ -6,6 +6,7 @@ mod map_def;
 mod map_files;
 mod map_loader;
 mod maps;
+mod patch;
 mod types;
 mod validate;
 
@@ -23,6 +24,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use game::{palette_color, Action, Game, Phase, Settings, TimerMode, PALETTE};
+use log_event::LogEvent;
 use maps::SharedMaps;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -45,7 +47,17 @@ const HOST: PlayerId = PlayerId::new(0);
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Control {
-    Join { name: String, color: Option<String>, token: Option<String> },
+    /// `delta` asks for patches instead of a whole view after every action (see `update_seat`). Left out, the
+    /// seat is sent a whole view each time, as it always was, so clients that know nothing of patches still work.
+    Join {
+        name: String,
+        color: Option<String>,
+        token: Option<String>,
+        #[serde(default)]
+        delta: bool,
+    },
+    /// A client that was sent patches and has lost track of them asks for the whole view again.
+    Resync,
     Start,
     /// Host only, before the game starts: pick the turn timer mode.
     SetTimer { mode: TimerMode },
@@ -76,8 +88,26 @@ struct LobbyPlayer {
 enum ServerMsg<'a> {
     Welcome { token: &'a str },
     /// `map` is the id of the chosen map; `maps` is every map the host can choose from.
-    Lobby { you: PlayerId, players: Vec<LobbyPlayer>, timer: TimerMode, settings: Settings, map: &'a str, maps: &'a [maps::MapInfo] },
-    Game { view: game::GameView<'a> },
+    Lobby { you: PlayerId, players: &'a [LobbyPlayer], timer: TimerMode, settings: Settings, map: &'a str, maps: &'a [maps::MapInfo] },
+    /// The whole view, board and log included. A seat that asked for patches is sent one first (`seq` 0) and
+    /// again whenever it asks (`resync`) or reconnects; it counts the patches after it from there. A seat that
+    /// didn't ask is sent one each time, with no `seq`.
+    Game {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        seq: Option<u64>,
+        view: &'a game::GameView<'a>,
+    },
+    /// What changed in the view since the last message to this seat: `ops` (see patch.rs) for everything but
+    /// the board and the log, and the log events the seat hasn't got, numbered from `log_from`. `seq` is one
+    /// more than the last message's, so a client can tell it missed one.
+    Patch {
+        seq: u64,
+        ops: Vec<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        log_from: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        log: Option<&'a [LogEvent]>,
+    },
     /// `code` lets the client react to specific failures (e.g. `color_taken`).
     Error {
         message: String,
@@ -91,6 +121,106 @@ struct Seat {
     color: &'static str,
     token: String,
     tx: Option<Tx>,
+    /// Whether the client asked for patches (`delta` in its `join`).
+    delta: bool,
+    /// What this seat has been sent of the game in progress, if it asks for patches. `None` until it has been
+    /// sent a whole view, and again whenever it must be sent one afresh (it reconnects, asks to resync, or the
+    /// game ends).
+    synced: Option<Synced>,
+}
+
+/// What a seat that asks for patches has been sent, so the next message can be the difference.
+struct Synced {
+    /// The seat's view as the client now holds it, as JSON, without the board and the log: those are never
+    /// patched (the board never changes; the log is sent by number, see `log_end`).
+    state: serde_json::Value,
+    /// The `seq` of the last message sent.
+    seq: u64,
+    /// One more than the number of the last log event sent (events are numbered from 0 for the whole game).
+    log_end: usize,
+    /// When the countdown in `state` was last sent; see `steady_timer`.
+    timer_at: Instant,
+}
+
+/// How far a countdown may be from where the client has counted it to before the server sends the time again.
+/// The server checks its clocks every 200 ms, and a message takes a moment to build.
+const TIMER_SLACK_MS: u64 = 500;
+
+/// A view's `timer.remaining_ms` is measured when the view is built, so it differs in every view even when
+/// nothing about the clock has happened, and would put an op in every patch. The client counts down by itself,
+/// so a countdown that is where the client has counted it to is left out: `next`'s `remaining_ms` is put back
+/// to what was last sent, and the diff then finds nothing. A different clock (another kind or player, a new
+/// total), a bonus or a clock that appeared or went is sent as it is. Returns when the countdown in `next` was
+/// last sent: `sent_at` if it wasn't sent again, else `now`.
+fn steady_timer(prev: &serde_json::Value, next: &mut serde_json::Value, sent_at: Instant, now: Instant) -> Instant {
+    let (Some(old), Some(new)) = (prev.get("timer"), next.get_mut("timer")) else { return now };
+    let remaining = |t: &serde_json::Value| t.get("remaining_ms").and_then(serde_json::Value::as_u64);
+    let (Some(was), Some(is)) = (remaining(old), remaining(new)) else { return now };
+    let same_clock = ["kind", "player", "total_ms"].iter().all(|k| old.get(*k) == new.get(*k));
+    let elapsed = now.saturating_duration_since(sent_at).as_millis() as u64;
+    if same_clock && is.abs_diff(was.saturating_sub(elapsed)) <= TIMER_SLACK_MS {
+        if let (Some(fields), Some(was)) = (new.as_object_mut(), old.get("remaining_ms")) {
+            fields.insert("remaining_ms".to_string(), was.clone());
+        }
+        sent_at
+    } else {
+        now
+    }
+}
+
+/// Tell one seat how the game stands. A seat that didn't ask for patches is sent the whole view. One that
+/// did is sent the whole view the first time (the board in it is the only time it is ever sent), and after
+/// that only what changed since the last message, or nothing at all if nothing did. `view` is for that seat.
+fn update_seat(seat: &mut Seat, mut view: game::GameView<'_>) {
+    let Some(tx) = seat.tx.clone() else { return };
+    if !seat.delta {
+        return send(&tx, &ServerMsg::Game { seq: None, view: &view });
+    }
+    let log = view.log;
+    let log_start = view.log_start;
+    let log_end = log_start + log.len();
+    // A seat that is missing events the view has already dropped from its window can't be patched (a patch
+    // can't say "you missed some"), so it starts again. That takes more than a window's worth of events
+    // between two messages, which a turn never makes.
+    let resumable = matches!(&seat.synced, Some(s) if s.log_end >= log_start);
+    let whole = if resumable { None } else { Some(serde_json::to_string(&ServerMsg::Game { seq: Some(0), view: &view })) };
+
+    // What patches are made of: the view without its board and its log.
+    view.board = None;
+    view.log = &[];
+    let Ok(mut state) = serde_json::to_value(&view) else { return };
+    if let Some(fields) = state.as_object_mut() {
+        fields.remove("log");
+        fields.remove("log_start");
+    }
+    let now = Instant::now();
+
+    if let Some(whole) = whole {
+        if let Ok(text) = whole {
+            let _ = tx.send(text);
+        }
+        seat.synced = Some(Synced { state, seq: 0, log_end, timer_at: now });
+        return;
+    }
+    let Some(synced) = seat.synced.as_mut() else { return };
+    let timer_at = steady_timer(&synced.state, &mut state, synced.timer_at, now);
+    let mut ops = Vec::new();
+    patch::diff(&synced.state, &state, &mut ops);
+    let fresh = &log[(synced.log_end - log_start).min(log.len())..];
+    if ops.is_empty() && fresh.is_empty() {
+        return;
+    }
+    synced.seq += 1;
+    let msg = ServerMsg::Patch {
+        seq: synced.seq,
+        ops,
+        log_from: if fresh.is_empty() { None } else { Some(log_end - fresh.len()) },
+        log: if fresh.is_empty() { None } else { Some(fresh) },
+    };
+    synced.state = state;
+    synced.log_end = log_end;
+    synced.timer_at = timer_at;
+    send(&tx, &msg);
 }
 
 /// The single in-memory table. Nothing here is ever written to disk.
@@ -140,48 +270,67 @@ impl Room {
         self.seats.position(|s| s.token == token)
     }
 
-    fn broadcast(&self) {
-        let connected: PerPlayer<bool> = self.seats.iter().map(|s| s.tx.is_some()).collect();
-        // Longest road is the same in every seat's view and costly to compute, so do it once here.
-        let game = self.game.as_ref().map(|g| (g, g.longest_roads()));
-        // Only a lobby lists the maps (a game just carries its board), so only then ask the registry.
-        let maps = if self.game.is_none() { maps::infos(&self.maps) } else { Vec::new() };
-        for (i, seat) in self.seats.entries() {
-            let Some(tx) = &seat.tx else { continue };
-            match &game {
-                Some((g, road_lens)) => send(tx, &ServerMsg::Game { view: g.view(i, &connected, road_lens) }),
-                None => send(
-                    tx,
-                    &ServerMsg::Lobby {
-                        you: i,
-                        timer: self.timer,
-                        settings: self.settings,
-                        map: &self.map,
-                        maps: &maps,
-                        players: self
-                            .seats
-                            .iter()
-                            .map(|s| LobbyPlayer {
-                                name: s.name.clone(),
-                                color: s.color.to_string(),
-                                connected: s.tx.is_some(),
-                            })
-                            .collect(),
-                    },
-                ),
+    /// Who is connected, by seat.
+    fn connected(&self) -> PerPlayer<bool> {
+        self.seats.iter().map(|s| s.tx.is_some()).collect()
+    }
+
+    /// Tell everyone how the table stands: the lobby, or the game (see `update_seat` for what a seat is sent).
+    fn broadcast(&mut self) {
+        let ids: Vec<PlayerId> = self.seats.entries().map(|(i, _)| i).collect();
+        match &self.game {
+            Some(g) => {
+                let connected = self.connected();
+                // Longest road is the same in every seat's view and costly to compute, so do it once here.
+                let road_lens = g.longest_roads();
+                for i in ids {
+                    update_seat(&mut self.seats[i], g.view(i, &connected, &road_lens));
+                }
+            }
+            None => {
+                // Only a lobby lists the maps (a game just carries its board), so only now ask the registry.
+                let maps = maps::infos(&self.maps);
+                let players: Vec<LobbyPlayer> = self
+                    .seats
+                    .iter()
+                    .map(|s| LobbyPlayer { name: s.name.clone(), color: s.color.to_string(), connected: s.tx.is_some() })
+                    .collect();
+                for i in ids {
+                    let seat = &mut self.seats[i];
+                    // Whatever game comes next starts with a whole view, board and all.
+                    seat.synced = None;
+                    let Some(tx) = &seat.tx else { continue };
+                    send(
+                        tx,
+                        &ServerMsg::Lobby { you: i, timer: self.timer, settings: self.settings, map: &self.map, maps: &maps, players: &players },
+                    );
+                }
             }
         }
     }
 
+    /// Send one seat the whole view again, and no one else anything. (In the lobby there is nothing to resend:
+    /// a lobby message is always whole.)
+    fn resend_game(&mut self, me: PlayerId) {
+        let connected = self.connected();
+        let Some(g) = &self.game else { return };
+        let road_lens = g.longest_roads();
+        self.seats[me].synced = None;
+        update_seat(&mut self.seats[me], g.view(me, &connected, &road_lens));
+    }
+
     fn handle(&mut self, tx: &Tx, token: &mut Option<String>, msg: ClientMsg) {
         match msg {
-            ClientMsg::Control(Control::Join { name, color, token: old }) => {
+            ClientMsg::Control(Control::Join { name, color, token: old, delta }) => {
                 if token.is_some() {
                     return;
                 }
-                // Reconnect to an existing seat?
+                // Reconnect to an existing seat? (Whatever it was sent before went to the old connection, so
+                // the new one starts from a whole view.)
                 if let Some(i) = old.as_deref().and_then(|t| self.seat_of(t)) {
                     self.seats[i].tx = Some(tx.clone());
+                    self.seats[i].delta = delta;
+                    self.seats[i].synced = None;
                     *token = Some(self.seats[i].token.clone());
                     send(tx, &ServerMsg::Welcome { token: &self.seats[i].token });
                     self.broadcast();
@@ -226,10 +375,18 @@ impl Room {
                     color,
                     token: t.clone(),
                     tx: Some(tx.clone()),
+                    delta,
+                    synced: None,
                 });
                 send(tx, &ServerMsg::Welcome { token: &t });
                 *token = Some(t);
                 self.broadcast();
+            }
+            ClientMsg::Control(Control::Resync) => {
+                let Some(me) = token.as_deref().and_then(|t| self.seat_of(t)) else {
+                    return error(tx, "Join the table first");
+                };
+                self.resend_game(me);
             }
             ClientMsg::Control(Control::Start) => {
                 let Some(me) = token.as_deref().and_then(|t| self.seat_of(t)) else {
@@ -456,7 +613,7 @@ async fn upload_map(State(room): State<Shared>, headers: HeaderMap, body: Result
 
     // Everyone in the lobby sees the new map. (A game in progress doesn't list maps, so there is nothing to say.)
     {
-        let room = room.lock().unwrap();
+        let mut room = room.lock().unwrap();
         if room.game.is_none() {
             room.broadcast();
         }
@@ -640,7 +797,7 @@ mod tests {
 
     #[test]
     fn the_lobby_names_the_chosen_map_and_lists_every_map() {
-        let (room, mut c) = table(&["Ada", "Bo"]);
+        let (mut room, mut c) = table(&["Ada", "Bo"]);
         room.broadcast();
         let lobby = c[1].latest("lobby").expect("a lobby message");
         assert_eq!(lobby["map"], "standard");
@@ -1076,5 +1233,273 @@ mod tests {
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(map_ids(&room), vec!["standard", "earth", "usa", "archipelago"]);
         assert!(c[0].heard().is_empty(), "a game doesn't list maps, so nothing is sent");
+    }
+
+    // ---- patches -------------------------------------------------------------------------------------
+
+    /// Like `table`, but the players named in `patched` ask for patches when they join.
+    fn table_with_patches(names: &[&str], patched: &[&str]) -> (Room, Vec<Client>) {
+        let mut room = Room::default();
+        let mut clients = vec![];
+        for name in names {
+            let mut c = Client::new();
+            c.say(&mut room, json!({ "type": "join", "name": name, "delta": patched.contains(name) }));
+            clients.push(c);
+        }
+        for c in &mut clients {
+            c.heard();
+        }
+        (room, clients)
+    }
+
+    /// What a client that asks for patches does with what it is sent (web/src/patch.ts does the same).
+    fn apply_to(view: &mut Value, msg: &Value) {
+        match msg["type"].as_str() {
+            Some("game") => *view = msg["view"].clone(),
+            Some("patch") => {
+                patch::apply(view, msg["ops"].as_array().expect("a patch has ops"));
+                if let Some(events) = msg["log"].as_array() {
+                    let held = view["log_start"].as_u64().unwrap() as usize + view["log"].as_array().unwrap().len();
+                    assert_eq!(msg["log_from"].as_u64().unwrap() as usize, held, "the new events follow on from the ones held");
+                    let log = view["log"].as_array_mut().unwrap();
+                    log.extend(events.iter().cloned());
+                    let dropped = log.len().saturating_sub(game::LOG_WINDOW);
+                    log.drain(..dropped);
+                    let start = view["log_start"].as_u64().unwrap() + dropped as u64;
+                    view["log_start"] = json!(start);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// A view with its countdown's `remaining_ms` zeroed: that is the one thing a patched client's copy may
+    /// differ in (see `steady_timer`).
+    fn without_clock(mut view: Value) -> Value {
+        if let Some(clock) = view.get_mut("timer").and_then(Value::as_object_mut) {
+            clock.insert("remaining_ms".to_string(), json!(0));
+        }
+        view
+    }
+
+    /// The whole view of this seat as the server would build it now.
+    fn truth(room: &Room, seat: usize) -> Value {
+        let g = room.game.as_ref().expect("a game");
+        serde_json::to_value(g.view(PlayerId::new(seat), &room.connected(), &g.longest_roads())).unwrap()
+    }
+
+    /// The next move of whoever's turn it is, for as long as it is one this test can make without looking: placing
+    /// the opening pieces, rolling and ending the turn. `None` once a roll leads somewhere else (a 7, a volcano).
+    fn next_move(room: &Room) -> Option<(usize, Value)> {
+        let g = room.game.as_ref()?;
+        let me = g.current;
+        let legal = g.legal(me);
+        let action = match g.phase {
+            Phase::Setup => match legal.settlements.first() {
+                Some(&vertex) => json!({ "type": "build_settlement", "vertex": vertex }),
+                None => json!({ "type": "build_road", "edge": legal.roads[0] }),
+            },
+            Phase::Roll => json!({ "type": "roll" }),
+            Phase::Main => json!({ "type": "end_turn" }),
+            _ => return None,
+        };
+        Some((me.index(), action))
+    }
+
+    /// Start the game and play it with `next_move`. The first `patched` clients ask for patches and the rest
+    /// don't. After every move each patched client's copy of its view, kept up with patches alone, must be the
+    /// view the server would build, and the others must be sent whole views as always.
+    /// Returns the size of the first whole view and of the biggest patch.
+    fn play_and_compare(room: &mut Room, c: &mut [Client], patched: usize, max_moves: usize) -> (usize, usize) {
+        c[0].say(room, json!({ "type": "start" }));
+        assert!(room.game.is_some(), "{:?}", c[0].errors());
+        let first: Vec<Value> = c.iter_mut().map(|x| x.latest("game").expect("a game message")).collect();
+        for (i, m) in first.iter().enumerate() {
+            assert!(m["view"]["board"]["hexes"].is_array(), "seat {i} is sent the board to begin with");
+            assert_eq!(m.get("seq").is_some(), i < patched, "only seats that ask for patches are numbered");
+            if i < patched {
+                assert_eq!(m["seq"], 0);
+            }
+        }
+        let whole = first[0].to_string().len();
+        let mut views: Vec<Value> = first[..patched].iter().map(|m| m["view"].clone()).collect();
+        let mut biggest = 0;
+        let mut moves = 0;
+        while let Some((who, action)) = next_move(room) {
+            c[who].say(room, action);
+            let heard: Vec<Vec<Value>> = c.iter_mut().map(|x| x.heard()).collect();
+            for m in heard.iter().flatten() {
+                assert_ne!(m["type"], "error", "{m}");
+            }
+            for (i, messages) in heard.iter().enumerate() {
+                for m in messages {
+                    if i < patched {
+                        if m["type"] == "patch" {
+                            biggest = biggest.max(m.to_string().len());
+                            for op in m["ops"].as_array().unwrap() {
+                                assert_ne!(op[0][0], "board", "the board is never patched");
+                            }
+                            assert!(m.get("view").is_none());
+                        }
+                        apply_to(&mut views[i], m);
+                    } else {
+                        assert_eq!(m["type"], "game");
+                        assert!(m["view"]["board"].is_object(), "a seat that doesn't ask for patches is sent the board each time");
+                        assert!(m.get("seq").is_none());
+                    }
+                }
+            }
+            for i in 0..patched {
+                assert_eq!(
+                    without_clock(views[i].clone()),
+                    without_clock(truth(room, i)),
+                    "after move {moves}: seat {i}'s patched view is not the real one"
+                );
+            }
+            moves += 1;
+            if moves == max_moves {
+                break;
+            }
+        }
+        assert!(moves >= 12, "the opening alone is a dozen moves, only {moves} were played");
+        (whole, biggest)
+    }
+
+    #[test]
+    fn a_patched_seat_always_holds_the_real_view_and_a_seat_that_never_asked_is_sent_whole_ones() {
+        let (mut room, mut c) = table_with_patches(&["Ada", "Bo", "Cy"], &["Ada", "Bo"]);
+        let (whole, biggest) = play_and_compare(&mut room, &mut c, 2, 40);
+        assert!(biggest * 4 < whole, "a patch is at most {biggest} bytes, a whole view {whole}");
+    }
+
+    #[test]
+    fn patches_are_a_small_fraction_of_a_whole_view_on_a_big_map() {
+        let (mut room, mut c) = table_with_patches(&["Ada", "Bo", "Cy", "Di"], &["Ada", "Bo", "Cy", "Di"]);
+        c[0].say(&mut room, json!({ "type": "set_map", "map": "earth" }));
+        c[0].heard();
+        let (whole, biggest) = play_and_compare(&mut room, &mut c, 4, 40);
+        assert!(biggest * 10 < whole, "a patch is at most {biggest} bytes, a whole view {whole}");
+    }
+
+    #[test]
+    fn an_update_with_nothing_new_says_nothing_to_a_patched_seat() {
+        let (mut room, mut c) = table_with_patches(&["Ada", "Bo", "Cy"], &["Ada", "Bo"]);
+        c[0].say(&mut room, json!({ "type": "start" }));
+        for x in &mut c {
+            x.heard();
+        }
+        room.broadcast();
+        assert!(c[0].heard().is_empty() && c[1].heard().is_empty(), "nothing changed, so nothing is sent");
+        assert_eq!(c[2].heard().len(), 1, "a seat that didn't ask is sent the view regardless");
+    }
+
+    #[test]
+    fn a_patched_seat_is_sent_the_whole_view_again_when_it_resyncs_reconnects_or_a_new_game_starts() {
+        let (mut room, mut c) = table_with_patches(&["Ada", "Bo"], &["Ada", "Bo"]);
+        c[0].say(&mut room, json!({ "type": "start" }));
+        for x in &mut c {
+            x.heard();
+        }
+
+        // it asks, and only it is sent anything
+        c[0].say(&mut room, json!({ "type": "resync" }));
+        let heard = c[0].heard();
+        assert_eq!(heard.len(), 1, "{heard:?}");
+        assert_eq!(heard[0]["type"], "game");
+        assert_eq!(heard[0]["seq"], 0);
+        assert!(heard[0]["view"]["board"].is_object());
+        assert!(c[1].heard().is_empty());
+        // and the patches after it count on from there
+        let (who, action) = next_move(&room).unwrap();
+        c[who].say(&mut room, action);
+        assert_eq!(c[0].latest("patch").expect("a patch")["seq"], 1);
+
+        // it reconnects (a new connection with the seat's token)
+        let token = c[0].token.clone().unwrap();
+        let mut again = Client::new();
+        again.say(&mut room, json!({ "type": "join", "name": "Ada", "token": token, "delta": true }));
+        let heard = again.heard();
+        let whole = heard.iter().find(|m| m["type"] == "game").expect("a whole view");
+        assert_eq!(whole["seq"], 0);
+        assert!(whole["view"]["board"].is_object());
+
+        // the game ends and the next one starts
+        c[1].heard();
+        room.game = None;
+        room.broadcast();
+        assert!(again.latest("lobby").is_some() && c[1].latest("lobby").is_some());
+        again.say(&mut room, json!({ "type": "start" }));
+        for client in [&mut again, &mut c[1]] {
+            let m = client.latest("game").expect("a game message");
+            assert_eq!(m["seq"], 0);
+            assert!(m["view"]["board"].is_object(), "a new game is sent with its board");
+        }
+    }
+
+    #[test]
+    fn resync_before_joining_is_refused_and_in_the_lobby_changes_nothing() {
+        let mut room = Room::default();
+        let mut stranger = Client::new();
+        stranger.say(&mut room, json!({ "type": "resync" }));
+        assert_eq!(stranger.errors(), vec!["Join the table first".to_string()]);
+        let (mut room, mut c) = table_with_patches(&["Ada", "Bo"], &["Ada", "Bo"]);
+        c[0].say(&mut room, json!({ "type": "resync" }));
+        assert!(c[0].heard().is_empty() && c[1].heard().is_empty());
+    }
+
+    #[test]
+    fn the_log_goes_out_by_number_and_a_long_game_keeps_the_same_window_as_a_whole_view() {
+        let (mut room, mut c) = table_with_patches(&["Ada", "Bo"], &["Ada", "Bo"]);
+        c[0].say(&mut room, json!({ "type": "start" }));
+        let mut view = c[0].latest("game").unwrap()["view"].clone();
+        c[1].heard();
+        // a few hundred events, a few at a time, pushes events off the front of the window
+        for round in 0..120 {
+            let g = room.game.as_mut().unwrap();
+            for _ in 0..(1 + round % 4) {
+                g.push_log_for_test(LogEvent::LongestRoadLost);
+            }
+            room.broadcast();
+            for m in c[0].heard() {
+                apply_to(&mut view, &m);
+            }
+            c[1].heard();
+        }
+        let real = truth(&room, 0);
+        assert_eq!(view["log"], real["log"]);
+        assert_eq!(view["log_start"], real["log_start"]);
+        assert_eq!(view["log"].as_array().unwrap().len(), game::LOG_WINDOW);
+        assert!(view["log_start"].as_u64().unwrap() > 0, "the window has slid");
+    }
+
+    #[test]
+    fn a_countdown_that_runs_as_the_client_expects_is_not_sent_again() {
+        let clock = |remaining_ms: u64, player: u64| json!({ "timer": { "kind": "turn", "player": player, "remaining_ms": remaining_ms, "total_ms": 90_000 } });
+        let sent_at = Instant::now();
+        let now = sent_at + Duration::from_millis(10_000);
+
+        // 10 s later it has 80 s left, which is where the client has counted to: not sent, and the baseline stays
+        let mut next = clock(80_100, 1);
+        assert_eq!(steady_timer(&clock(90_000, 1), &mut next, sent_at, now), sent_at);
+        assert_eq!(next, clock(90_000, 1));
+        let mut ops = vec![];
+        patch::diff(&clock(90_000, 1), &next, &mut ops);
+        assert!(ops.is_empty());
+
+        // a bonus put time back on it: sent
+        let mut next = clock(85_000, 1);
+        assert_eq!(steady_timer(&clock(90_000, 1), &mut next, sent_at, now), now);
+        assert_eq!(next, clock(85_000, 1));
+
+        // someone else's clock, or one that started or stopped: sent
+        let mut next = clock(80_000, 2);
+        assert_eq!(steady_timer(&clock(90_000, 1), &mut next, sent_at, now), now);
+        assert_eq!(next, clock(80_000, 2));
+        let mut next = json!({ "timer": null });
+        assert_eq!(steady_timer(&clock(90_000, 1), &mut next, sent_at, now), now);
+        assert_eq!(next, json!({ "timer": null }));
+        let mut next = clock(90_000, 1);
+        assert_eq!(steady_timer(&json!({ "timer": null }), &mut next, sent_at, now), now);
+        assert_eq!(next, clock(90_000, 1));
     }
 }

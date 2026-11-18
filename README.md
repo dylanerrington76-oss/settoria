@@ -217,7 +217,9 @@ offer earns nothing by itself.
     docker-compose.yml  `settoria` (the game), `web-dev` (hot-reloading client, profile `dev`) and `tests` (profile `test`)
     src/game.rs    all rules and timers (Game::apply validates every action, Game::tick fires timeouts) + unit and fuzz tests
     src/main.rs    lobby, WebSocket protocol, static file serving
+    src/patch.rs   the difference between two JSON values, which is what a client that asks for patches is sent
     web/src        React client (Board.tsx = SVG board, ui.tsx = panels/dialogs, App.tsx = screens)
+    web/src/patch.ts  applies those patches to the game view (no React); web/scripts/patch-test.mjs tests it
     web/src/MapEditor.tsx  the map editor page; mapModel.ts reads, checks and writes map files (no React), MapPieces.tsx draws the pieces
     scripts/smoke.mjs   end-to-end test with 3 websocket clients (server must be running)
     scripts/timer.mjs   end-to-end check of the 10s auto-roll and clock accounting (~12s, needs a fresh server)
@@ -226,6 +228,7 @@ offer earns nothing by itself.
 
     cargo test --release                 # rules, maps, map loading and uploads, the lobby protocol, random-play fuzzing
     (cd web && npm test)                 # renders the lobby and log in Node and checks what they say
+    (cd web && node scripts/patch-test.mjs)   # the client's half of the patch protocol (needs Node 22.18 or later)
     cargo run --release &                # server on :3000
     cargo run --release -- validate examples/maps/archipelago.json   # check a map file (no server started)
     node scripts/smoke.mjs               # end-to-end check
@@ -235,7 +238,8 @@ offer earns nothing by itself.
 
 ## Protocol (JSON over `/ws`)
 
-Client to server: `{"type":"join","name","color"?,"token"?}`, `set_timer{mode}` (host only, before the game starts;
+Client to server: `{"type":"join","name","color"?,"token"?,"delta"?}` (`delta: true` asks for patches; see *Patches*
+below), `resync` (a client that is sent patches asks for the whole view again), `set_timer{mode}` (host only, before the game starts;
 `mode` is `very_fast`, `fast`, `normal` or `slow`), `set_map{map}` (host only, before the game starts; `map` is the
 `id` of one of the maps in the lobby's `maps`, such as `standard` or `earth`; an id the server doesn't have is refused
 with an `error` and nothing changes), `set_settings{settings}` (host only, before the game starts;
@@ -262,7 +266,8 @@ lobby is sent to everyone again with the map in its list. Every failure is answe
 list of sentences) and a status: `401` no known token, `403` the token isn't the host's, `413` over 256 KB, `422`
 not a good map (every issue is listed, as `validate` lists them), `409` the 10-upload limit is used up.
 
-Server to client: `welcome{token}`, `lobby{you,players,timer,settings,map,maps}`, `game{view}`, `error{message,code?}`.
+Server to client: `welcome{token}`, `lobby{you,players,timer,settings,map,maps}`, `game{seq?,view}`, `patch{seq,ops,log_from?,log?}`
+(see *Patches*), `error{message,code?}`.
 In the lobby, `map` is the id of the chosen map and `maps` lists every map the host can choose from, in the order to
 show them: `{id, name, author, hexes, players_min, players_max, builtin, recommended_settings?}`. `players_min` and
 `players_max` are who the map is meant for (`start` is refused with an `error` outside that range, and the lobby stays
@@ -280,3 +285,33 @@ The view also carries `trades` (the open offers: `{id, from, give, want, replies
 `{kind, player, remaining_ms, total_ms}` where `kind` is `setup_settlement`, `setup_road`, `roll`, `discard`,
 `robber`, `steal` or `turn`. `remaining_ms` is measured when the view was built, so clients count down from the
 moment the message arrives; every action (and every timeout) sends a fresh view, which also reflects bonuses.
+(A client that is sent patches is told the time again only when it isn't where that countdown has got to: see *Patches*.)
+
+### Patches
+
+By default every action sends every seat the whole `game{view}`, and the board is most of it (half of a Standard game's
+view, three quarters of Earth's or the USA's), though it never changes during a game. A client can ask for less with
+`"delta": true` in its `join`, which the browser client does. Such a seat is then sent:
+
+- `game{seq: 0, view}` first: the whole view, board and log included. It is sent again, and `seq` starts from 0 again, when
+  the seat reconnects, when it sends `resync`, and when a new game starts after a `lobby`.
+- `patch{seq, ops, log_from?, log?}` after every change, and nothing at all when nothing the seat can see has changed.
+  `seq` is one more than the last message's (a client that sees a gap, or a patch that doesn't fit, sends `resync` and
+  ignores patches until the next `game`).
+
+`ops` change the view as the client holds it, in order, and say nothing of the board (which never changes) or of
+the `log` and `log_start` (see below). An op is `[path, value]`, which sets what is at `path` to `value`, or `[path]`,
+which removes the key there. A `path` is an array of steps from the top of the view: a string is a key of an object, a
+number is an index into an array. For example `[["buildings", 17], {"owner": 1, "city": false}]` and
+`[["players", 2, "cards"], 5]`. Arrays are patched entry by entry only when that is shorter than sending them (a long
+array that is mostly `null`, like `buildings` and `roads`, or one of objects, like `players`); a short list of numbers,
+such as `hand`, comes whole, and so does an array whose length has changed (`trades`). `remaining_ms` of the `timer` is left out
+while the same countdown runs where the client has counted it to (within half a second), so it is sent when the clock
+starts, changes hands, or is given a bonus.
+
+The log is numbered, not patched: `log` holds the events the client doesn't have, the first of which is number `log_from`.
+The client appends them and keeps the newest 50, as a whole view does, and `log_start` is the number of the first it
+keeps. A client that finds `log_from` isn't where its own log ends asks for a `resync`.
+
+A client that doesn't send `delta` is sent a whole `game{view}` after every action, exactly as before, with no `seq`.
+`src/patch.rs` makes patches and `web/src/patch.ts` applies them.

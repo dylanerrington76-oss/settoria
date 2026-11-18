@@ -425,10 +425,28 @@ export interface LobbyPlayer {
   connected: boolean;
 }
 
+/** One step of a patch's path: a key of an object, or an index into an array. */
+export type PatchStep = string | number;
+/** `[path, value]` sets what is at `path` to `value`; `[path]` removes the key there (see `src/patch.rs`). */
+export type PatchOp = [path: PatchStep[], value?: unknown];
+/**
+ * What changed in the view since the last message: `ops` for everything but the board and the log, and the log
+ * events the client doesn't have yet, numbered from `log_from`. `seq` is one more than the last message's.
+ */
+export interface GamePatch {
+  type: 'patch';
+  seq: number;
+  ops: PatchOp[];
+  log_from?: number;
+  log?: LogEvent[];
+}
+
 export type ServerMsg =
   | { type: 'welcome'; token: string }
   | { type: 'lobby'; you: number; players: LobbyPlayer[]; timer: TimerMode; settings: Settings; map: string; maps: MapInfo[] }
-  | { type: 'game'; view: GameView }
+  /** The whole view, with the board. `seq` (0) is there when the server is sending patches, which count on from it. */
+  | { type: 'game'; seq?: number; view: GameView }
+  | GamePatch
   | { type: 'error'; message: string; code?: string };
 
 export const covers = (have: Res, need: Res): boolean => need.every((n, i) => have[i] >= n);

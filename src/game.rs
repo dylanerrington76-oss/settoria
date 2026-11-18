@@ -276,6 +276,10 @@ struct Clock {
     total: Duration,
 }
 
+/// How many of the newest log events a view carries. A client that is sent patches keeps the same window
+/// (`LOG_WINDOW` in web/src/patch.ts), so the two must agree.
+pub const LOG_WINDOW: usize = 50;
+
 /// The countdown as clients see it. `remaining_ms` is relative to the moment the
 /// view was built, so clients need no synchronised clock.
 #[derive(Serialize)]
@@ -538,7 +542,11 @@ pub struct PlayerView {
 pub struct GameView<'a> {
     pub you: PlayerId,
     pub settings: Settings,
-    pub board: &'a Board,
+    /// The board never changes during a game, so a client that asked for patches is sent it once, in its first
+    /// view, and `view()` always fills it in; the server clears it where it has already been sent
+    /// (see `update_seat` in main.rs). Cleared, it is left out of the JSON altogether.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board: Option<&'a Board>,
     pub phase: Phase,
     pub current: PlayerId,
     pub rolled: bool,
@@ -751,6 +759,13 @@ impl Game {
             self.log.remove(0);
             self.log_dropped += 1;
         }
+    }
+
+    /// Add an event to the log as the rules do, for tests of what clients are sent, which can't make the rules
+    /// log hundreds of events on demand.
+    #[cfg(test)]
+    pub fn push_log_for_test(&mut self, event: LogEvent) {
+        self.log(event);
     }
 
     /// Who places during setup step `idx`: turn order forward, then backward, then
@@ -2143,12 +2158,12 @@ impl Game {
                 }
             })
             .collect();
-        let start = self.log.len().saturating_sub(50);
+        let start = self.log.len().saturating_sub(LOG_WINDOW);
         let now = Instant::now();
         GameView {
             you,
             settings: self.settings,
-            board: &self.board,
+            board: Some(&self.board),
             phase: self.phase,
             current: self.current,
             rolled: self.rolled,
