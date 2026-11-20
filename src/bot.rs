@@ -22,7 +22,7 @@
 //! | Bank trade | only if it leads to a build the bot can afford this turn; a share of what that build is worth |
 //! | Robber | the opponent pips on a hex, doubled for cities and weighted toward the public-points leader; a heavy penalty for the bot's own buildings |
 //! | Steal | the victim with the most cards, then the most public points |
-//! | Discard, volcano pick | keep, or take, what completes the bot's current target (its best build, affordable or not) |
+//! | Discard, volcano or gold pick | keep, or take, what completes the bot's current target (its best build, affordable or not) |
 //! | End turn | 0, so the bot ends its turn when nothing scores above it |
 //!
 //! The spec above is silent about playing development cards and about player-to-player trades, so:
@@ -103,13 +103,14 @@ fn pips(number: Option<u8>) -> i32 {
 }
 
 /// What a hex yields to a building on it, in score units. A volcano gives a free pick of any resource when its
-/// number is rolled, but its lava can wreck the building, so it counts for half.
+/// number is rolled, but its lava can wreck the building, so it counts for half. Gold gives the same free pick
+/// with no lava, so it counts in full.
 fn hex_value(g: &Game, hex: usize) -> i32 {
     let h = &g.board.hexes[hex];
     let value = pips(h.number) * PIP;
     if h.terrain.is_volcano() {
         value / 2
-    } else if h.terrain.resource().is_some() {
+    } else if h.terrain.is_gold() || h.terrain.resource().is_some() {
         value
     } else {
         0

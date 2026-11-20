@@ -1,4 +1,6 @@
 // Postgame%: how likely each player was to win, judged only from how much dice income they collected.
+// The same formula drives the live win% bar on the player panels (`WinBar` in ui.tsx), fed with the dice income
+// collected so far, so it moves after every roll and ends on the same numbers as the end-game screen.
 //
 // 1. x1 is a player's dice income minus the leader's, so the leader is always 0 and everyone else is
 //    zero or below (income 10 and 8 give x1 = 0 and -2).

@@ -50,10 +50,16 @@ pub enum LogEvent {
     VolcanoPicked { player: PlayerId, resource: Resource },
     /// A volcano's number came up while the robber sat on it: nobody picks, but the lava still flows.
     VolcanoBlocked { hex: usize },
-    /// The bank ran out of cards, so the picks still owed at a volcano were dropped.
+    /// The bank ran out of cards, so the picks still owed at a volcano (or a gold field) were dropped.
     VolcanoBankEmpty,
     /// The lava from the volcano on `hex` ran down corner `die` (1 to 6). `owner` is whose building was hit.
     LavaFlow { hex: usize, die: u8, effect: LavaEffect, owner: Option<PlayerId> },
+
+    // ---- gold ---------------------------------------------------------------------------
+    /// `player` took a free card from a gold field whose number was rolled.
+    GoldPicked { player: PlayerId, resource: Resource },
+    /// A gold field's number came up while the robber sat on it: nobody picks.
+    GoldBlocked { hex: usize },
 
     // ---- building and development cards -------------------------------------------
     /// A free setup placement (as opposed to `BuiltSettlement`, which is paid for).
@@ -124,6 +130,11 @@ mod tests {
             wire(&LogEvent::VolcanoPicked { player: PlayerId::new(0), resource: Resource::Grain }),
             json!({ "type": "volcano_picked", "player": 0, "resource": 3 })
         );
+        assert_eq!(
+            wire(&LogEvent::GoldPicked { player: PlayerId::new(1), resource: Resource::Ore }),
+            json!({ "type": "gold_picked", "player": 1, "resource": 2 })
+        );
+        assert_eq!(wire(&LogEvent::GoldBlocked { hex: 3 }), json!({ "type": "gold_blocked", "hex": 3 }));
         assert_eq!(
             wire(&LogEvent::BankTrade { player: PlayerId::new(1), give: Resource::Brick, get: Resource::Ore, ratio: 3 }),
             json!({ "type": "bank_trade", "player": 1, "give": 0, "get": 2, "ratio": 3 })

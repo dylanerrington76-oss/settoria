@@ -496,7 +496,9 @@ function statusFor(v: GameView): string {
     case 'steal':
       return mine ? 'Select Player to Rob' : `${cur} is choosing who to rob`;
     case 'volcano_pick':
-      return v.volcano?.player === v.you ? 'Pick a Free Resource' : `${v.players[v.volcano?.player ?? v.current]?.name} is picking from the volcano`;
+      return v.volcano?.player === v.you
+        ? 'Pick a Free Resource'
+        : `${v.players[v.volcano?.player ?? v.current]?.name} is picking from the ${v.volcano && v.board.hexes[v.volcano.hex]?.terrain === 'gold' ? 'gold field' : 'volcano'}`;
     case 'main':
       return mine ? 'Your Turn' : `${cur}'s Turn`;
     case 'road_building':
@@ -801,7 +803,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
           }}
         />
       )}
-      {dialog === 'rules' && <RulesDialog settings={v.settings} volcano={v.board.hexes.some((h) => h.terrain === 'volcano')} onClose={() => setDialog(null)} />}
+      {dialog === 'rules' && <RulesDialog settings={v.settings} volcano={v.board.hexes.some((h) => h.terrain === 'volcano')} gold={v.board.hexes.some((h) => h.terrain === 'gold')} onClose={() => setDialog(null)} />}
       {/* The phone layout has no book icon, so its info dialog carries a button to the building costs. */}
       {dialog === 'info' && <InfoDialog v={v} onClose={() => setDialog(null)} onCosts={phone ? () => setDialog('rules') : undefined} />}
       {dialog === 'settings' && <SettingsDialog pips={pips} onPips={setPips} onFullscreen={toggleFull} onClose={() => setDialog(null)} />}

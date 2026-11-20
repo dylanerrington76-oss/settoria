@@ -222,6 +222,35 @@ html.m-lock body {
   gap: 2px;
   padding: 7px 4px 4px;
 }
+/* Live win%: the green bar under the cards of a player (WinBar in ui.tsx). */
+.m-table .m-win {
+  position: relative;
+  height: 12px;
+  margin: 0 4px 5px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.m-table .m-win-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #4fc468 0%, #2d9a45 100%);
+  transition: width 0.6s ease;
+}
+.m-table .m-win-label {
+  position: relative;
+  display: block;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 12px;
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.7);
+}
 .m-table .m-pc {
   --cw: 23px;
   --ch: 33px;
@@ -371,6 +400,10 @@ html.m-lock body {
   position: relative;
   flex: 1 1 0;
   min-height: 0;
+}
+/* The bottom strip of the stage belongs to the dice (and the log button): the board is drawn above it, so neither covers a hex. */
+.m-table .m-stage > .board {
+  height: calc(100% - 68px);
 }
 .m-table .m-stage .trade-stack {
   left: 8px;

@@ -48,12 +48,12 @@ interface View {
   y: number;
   k: number;
 }
-type Piece = 'wild' | 'desert' | 'volcano' | 'port';
+type Piece = 'wild' | 'desert' | 'volcano' | 'gold' | 'port';
 
 /** The terrain a hex piece is written with: a striped hex is dealt at random (null). */
-const pieceTerrain = (piece: Piece): EdHex['terrain'] => (piece === 'desert' ? 'desert' : piece === 'volcano' ? 'volcano' : null);
+const pieceTerrain = (piece: Piece): EdHex['terrain'] => (piece === 'desert' ? 'desert' : piece === 'volcano' ? 'volcano' : piece === 'gold' ? 'gold' : null);
 /** The bar piece a hex of this terrain came from. */
-const terrainPiece = (terrain: EdHex['terrain']): Piece => (terrain === 'desert' ? 'desert' : terrain === 'volcano' ? 'volcano' : 'wild');
+const terrainPiece = (terrain: EdHex['terrain']): Piece => (terrain === 'desert' ? 'desert' : terrain === 'volcano' ? 'volcano' : terrain === 'gold' ? 'gold' : 'wild');
 type Target = { t: 'cell'; q: number; r: number; ok: boolean } | { t: 'edge'; q: number; r: number; side: number } | { t: 'bar' } | { t: 'none' };
 
 /** The white dots marking every free coast edge during a port drag. Only redraws when the highlighted edge changes. */
@@ -142,6 +142,7 @@ const TILES: { piece: Piece; label: string; hint: string }[] = [
   { piece: 'port', label: 'Port', hint: 'on the coast' },
   { piece: 'desert', label: 'Desert', hint: 'always a desert' },
   { piece: 'volcano', label: 'Volcano', hint: 'free resources, then lava' },
+  { piece: 'gold', label: 'Gold', hint: 'free resources, no lava' },
 ];
 
 function TileArt({ piece }: { piece: Piece }) {

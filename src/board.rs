@@ -29,6 +29,10 @@ pub enum Terrain {
     /// picks free resources and then the lava flows (see `Game::erupt`). It is a numbered hex, and its number is
     /// always a 6 or 8 (see `deal_layout`).
     Volcano,
+    /// Produces no resource of its own. When its number is rolled, each player with a building on it
+    /// picks free resources, just like at a volcano, but no lava flows: a building on gold is never at risk.
+    /// It is a numbered hex that takes an ordinary token from the pool (see `deal_layout`).
+    Gold,
 }
 
 impl Terrain {
@@ -42,6 +46,7 @@ impl Terrain {
             Terrain::Pasture => "pasture",
             Terrain::Desert => "desert",
             Terrain::Volcano => "volcano",
+            Terrain::Gold => "gold",
         }
     }
 }
@@ -54,12 +59,22 @@ impl Terrain {
             Terrain::Mountains => Some(Resource::Ore),
             Terrain::Fields => Some(Resource::Grain),
             Terrain::Pasture => Some(Resource::Wool),
-            Terrain::Desert | Terrain::Volcano => None,
+            Terrain::Desert | Terrain::Volcano | Terrain::Gold => None,
         }
     }
 
     pub fn is_volcano(self) -> bool {
         self == Terrain::Volcano
+    }
+
+    pub fn is_gold(self) -> bool {
+        self == Terrain::Gold
+    }
+
+    /// A hex that makes no resource of its own but gives its buildings a free card of their choice when its
+    /// number is rolled (see `Game::start_volcanoes`): a volcano or a gold field.
+    pub fn gives_free_pick(self) -> bool {
+        self.is_volcano() || self.is_gold()
     }
 }
 

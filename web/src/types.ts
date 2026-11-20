@@ -169,8 +169,16 @@ export const DEFAULT_SETTINGS: Settings = {
   bank_ratio: 4,
 };
 
-/** Friendly Robber protects players with this many visible points or fewer (FRIENDLY_ROBBER_MAX_VP in src/game.rs). */
+/** Friendly Robber protects players with this many visible points or fewer in a standard game (2 starting settlements worth 1 point each). */
 export const FRIENDLY_ROBBER_MAX_VP = 2;
+
+/**
+ * Friendly Robber protects players with this many visible points or fewer: the points every player has once
+ * setup is over, i.e. the starting settlements at the settlement value (`Settings::friendly_robber_max_vp` in src/game.rs).
+ */
+export function friendlyRobberMaxVp(s: Pick<Settings, 'starting_settlements' | 'settlement_points'>): number {
+  return s.starting_settlements * s.settlement_points;
+}
 
 /** What the running countdown is for. Only `turn` is the standard per-turn clock. */
 export type ClockKind = 'setup_settlement' | 'setup_road' | 'roll' | 'discard' | 'robber' | 'steal' | 'volcano' | 'turn';
@@ -201,7 +209,7 @@ export interface TimerView {
   total_ms: number;
 }
 
-export type Terrain = 'hills' | 'forest' | 'mountains' | 'fields' | 'pasture' | 'desert' | 'volcano';
+export type Terrain = 'hills' | 'forest' | 'mountains' | 'fields' | 'pasture' | 'desert' | 'volcano' | 'gold';
 export type Phase =
   | 'setup'
   | 'roll'
@@ -286,6 +294,8 @@ export interface PlayerView {
   cities_left: number;
   vp: number;
   longest_road: number;
+  /** Dice income so far, public all game: the input of the live win% bar (see `postgame.ts`). */
+  dice_income: number;
   vp_total: number | null;
   /** Set together with `vp_total`, once the game is over. */
   vp_breakdown: VpBreakdown | null;
@@ -318,6 +328,8 @@ export interface VolcanoView {
   hex: number;
   player: number;
   left: number;
+  /** True while a last starting settlement is picking (no eruption follows). */
+  setup: boolean;
 }
 /** What a lava flow did to the corner it reached (`LavaEffect` in src/log_event.rs). */
 export type LavaEffect = 'nothing' | 'destroyed' | 'demoted';
@@ -351,6 +363,8 @@ export type LogEvent =
   | { type: 'stole'; player: number; victim: number }
   | { type: 'volcano_picked'; player: number; resource: number }
   | { type: 'volcano_blocked'; hex: number }
+  | { type: 'gold_picked'; player: number; resource: number }
+  | { type: 'gold_blocked'; hex: number }
   | { type: 'volcano_bank_empty' }
   | { type: 'lava_flow'; hex: number; die: number; effect: LavaEffect; owner: number | null }
   | { type: 'placed_settlement'; player: number }

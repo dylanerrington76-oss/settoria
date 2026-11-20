@@ -128,9 +128,9 @@ function pieces(extra: boolean) {
   return { buildings, roads };
 }
 
-const pv = (id: number, cards: number, vp: number, road: number, left: [number, number, number], knights = 0) => ({
+const pv = (id: number, cards: number, vp: number, road: number, left: [number, number, number], knights = 0, dice_income = 0) => ({
   id, name: NAMES[id], color: PALETTE[[5, 4, 3, 0][id]].hex, connected: true, cards, dev_cards: 0, knights,
-  roads_left: left[0], settlements_left: left[1], cities_left: left[2], vp, longest_road: road, vp_total: null, vp_breakdown: null, stats: null,
+  roads_left: left[0], settlements_left: left[1], cities_left: left[2], vp, longest_road: road, dice_income, vp_total: null, vp_breakdown: null, stats: null,
 });
 
 function base(): GameView {
@@ -205,7 +205,7 @@ export function fixture(name: string): { view: GameView; clock?: number } {
     v.legal.roads = [E([-0.866, -3.5], [-0.866, -2.5])];
     v.legal.settlements = [V(0, -4), V(0, 1)];
     v.steal_candidates = [1, 3];
-    v.players = [pv(0, 12, 2, 3, [11, 3, 4], 1), pv(1, 5, 3, 2, [13, 3, 4]), pv(2, 6, 2, 1, [14, 3, 4]), pv(3, 3, 2, 2, [13, 3, 4], 2)];
+    v.players = [pv(0, 12, 2, 3, [11, 3, 4], 1, 12), pv(1, 5, 3, 2, [13, 3, 4], 0, 9), pv(2, 6, 2, 1, [14, 3, 4], 0, 10), pv(3, 3, 2, 2, [13, 3, 4], 2, 6)];
     v.longest_road_holder = null;
     v.largest_army_holder = 3;
     v.log = [
@@ -240,6 +240,7 @@ export function fixture(name: string): { view: GameView; clock?: number } {
       const [dice_income, dev_cards_bought, trades] = stats[i];
       return {
         ...p,
+        dice_income,
         vp_total: p.vp,
         vp_breakdown: { settlements, cities, dev_cards, largest_army, longest_road },
         stats: { dice_income, dev_cards_bought, trades },

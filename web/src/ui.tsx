@@ -1,4 +1,4 @@
-import { createContext, Fragment, ReactNode, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, Fragment, ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Avatar,
   BankIcon,
@@ -26,7 +26,7 @@ import {
   covers,
   devHelp,
   DEV_NAMES,
-  FRIENDLY_ROBBER_MAX_VP,
+  friendlyRobberMaxVp,
   ClockKind,
   GameView,
   lightTextColor,
@@ -42,6 +42,7 @@ import {
   Trade,
 } from './types';
 import { changedCount, settingsRows } from './GameSettings';
+import { formatPostgame, postgamePercent } from './postgame';
 
 /** Small color swatch; with no color it is an empty outline (an open seat). */
 export function Chip({ color, name }: { color?: string; name?: string }) {
@@ -132,11 +133,11 @@ export function ResourceButtons({
 }
 
 /* ------------------------------------------------------------------ */
-/* Volcano: free resource pick                                          */
+/* Volcano and gold: free resource pick                                 */
 /* ------------------------------------------------------------------ */
 
 /**
- * Shown over the board while a volcano's players pick their free cards, one player at a time.
+ * Shown over the board while a volcano's (or a gold field's) players pick their free cards, one player at a time.
  * The player whose pick it is gets the five resource buttons (a resource the bank has run out of is disabled);
  * everybody else sees who is choosing.
  */
@@ -145,10 +146,21 @@ export function VolcanoBar({ v, onPick }: { v: GameView; onPick: (res: number) =
   if (!vol) return null;
   const mine = vol.player === v.you;
   const who = v.players[vol.player];
+  const gold = v.board.hexes[vol.hex]?.terrain === 'gold';
+  const place = gold ? 'a gold field' : 'a volcano';
   return (
-    <section className="volcano-bar" aria-label="Volcano" aria-live="polite">
+    <section className={gold ? 'volcano-bar gold' : 'volcano-bar'} aria-label={gold ? 'Gold' : 'Volcano'} aria-live="polite">
       <h2>
-        <span aria-hidden="true">🌋</span> {mine ? 'The volcano erupts! Pick a free resource' : `${who.name} is picking a free resource from the volcano`}
+        <span aria-hidden="true">{gold ? '🪙' : '🌋'}</span>{' '}
+        {vol.setup
+          ? mine
+            ? `Your settlement is next to ${place}! Pick a free resource`
+            : `${who.name} is picking a free resource for their settlement next to ${place}`
+          : mine
+            ? gold
+              ? 'Gold! Pick a free resource'
+              : 'The volcano erupts! Pick a free resource'
+            : `${who.name} is picking a free resource from the ${gold ? 'gold field' : 'volcano'}`}
         {vol.left > 1 && <small> ({vol.left} cards left to pick)</small>}
       </h2>
       {mine && <ResourceButtons selected={null} onPick={onPick} disabled={(i) => v.bank[i] === 0} label={(i) => `${v.bank[i]} in bank`} />}
@@ -371,7 +383,7 @@ export function PickResourceDialog({
 /** "1 point", "2 points". */
 const pts = (n: number): string => `${n} point${n === 1 ? '' : 's'}`;
 
-export function RulesDialog({ settings, volcano, onClose }: { settings: Settings; volcano?: boolean; onClose: () => void }) {
+export function RulesDialog({ settings, volcano, gold, onClose }: { settings: Settings; volcano?: boolean; gold?: boolean; onClose: () => void }) {
   const row = (label: ReactNode, cost: Res) => (
     <div className="cost-row">
       <span>{label}</span>
@@ -409,14 +421,22 @@ export function RulesDialog({ settings, volcano, onClose }: { settings: Settings
         <li>
           Roll a 7 and anyone holding more than {settings.discard_limit} cards discards half, then the robber moves.
           {settings.friendly_robber &&
-            ` Friendly Robber is on: it can't go next to a player with ${FRIENDLY_ROBBER_MAX_VP} points or fewer.`}
+            ` Friendly Robber is on: it can't go next to a player with ${friendlyRobberMaxVp(settings)} points or fewer.`}
         </li>
         {volcano && (
           <li>
             Volcano: when its number is rolled, each settlement next to it takes 1 free card of your choice and each city 2. Then a die
             decides which of its six numbered corners the lava runs down: a settlement there is destroyed, a city is reduced to a
             settlement. If you have no settlement piece left to put in a city's place, the settlement is still built, and you can't build
-            another city until you upgrade it again. The robber on the volcano stops the free cards but not the eruption.
+            another city until you upgrade it again. The robber on the volcano stops the free cards but not the eruption. A volcano with no settlement or city next to it doesn't erupt. A volcano
+            makes no cards of its own, so your last starting settlement gets 1 free card of your choice for each volcano it touches.
+          </li>
+        )}
+        {gold && (
+          <li>
+            Gold: when its number is rolled, each settlement next to it takes 1 free card of your choice and each city 2. Nothing
+            erupts, so buildings next to gold are never at risk. The robber on the gold stops the free cards. Gold makes no cards of its own,
+            so your last starting settlement gets 1 free card of your choice for each gold field it touches.
           </li>
         )}
         <li>
@@ -606,6 +626,53 @@ function Stat({ icon, n, held, title, slot }: { icon: ReactNode; n: number; held
   );
 }
 
+/**
+ * A player's live win probability: a green bar filled to their share, with the percentage on it. It is the
+ * Postgame% formula (postgame.ts) applied to the dice income collected so far, so it changes after every roll.
+ * `className` picks the look: `prow-win` on the desktop rail, `m-win` on the phone cards.
+ */
+export function WinBar({ v, id, className }: { v: GameView; id: number; className: string }) {
+  const share = postgamePercent(v.players.map((p) => p.dice_income))[id] ?? 0;
+  const label = formatPostgame(share);
+  return (
+    <div
+      className={className}
+      role="progressbar"
+      aria-label="Win probability"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(share * 100)}
+      title={`Win probability, from dice income so far: ${label}`}
+    >
+      <span className={className + '-fill'} style={{ width: `${share * 100}%` }} />
+      <span className={className + '-label'}>{label}</span>
+    </div>
+  );
+}
+
+/**
+ * The small marker on the row of the player whose turn it is: a yellow pill with a dot and, for the player on the
+ * clock, the live countdown. It keeps its own timer so the 4 Hz repaint only touches this pill.
+ */
+function TurnPill({ v, id }: { v: GameView; id: number }) {
+  const timer = v.timer && v.timer.player === id ? v.timer : null;
+  const [, tick] = useState(0);
+  const anchor = useMemo(() => ({ at: performance.now(), ms: timer?.remaining_ms ?? 0 }), [timer]);
+  useEffect(() => {
+    if (!timer) return;
+    const t = window.setInterval(() => tick((n) => n + 1), 250);
+    return () => window.clearInterval(t);
+  }, [timer]);
+  const secs = timer ? Math.ceil(Math.max(0, anchor.ms - (performance.now() - anchor.at)) / 1000) : null;
+  const text = secs === null ? 'Turn' : `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+  return (
+    <span className={'turn-pill' + (secs !== null && secs < 10 ? ' urgent' : '')} title={secs === null ? 'Their turn' : 'Time left on this turn'}>
+      <i aria-hidden="true" />
+      {text}
+    </span>
+  );
+}
+
 export function PlayerRow({ v, id }: { v: GameView; id: number }) {
   const p = v.players[id];
   const me = id === v.you;
@@ -618,19 +685,27 @@ export function PlayerRow({ v, id }: { v: GameView; id: number }) {
   return (
     <li className={'prow' + (me ? ' me' : '') + (turn ? ' turn' : '') + (p.connected ? '' : ' away')}>
       <div className="prow-main">
-        <div className="prow-id">
-          <span className="prow-name" title={p.name}>
-            {p.name}
-          </span>
-          <span className="avatar-wrap">
-            <Avatar color={p.color} self={me} size={me ? 70 : 44} />
-            <Ribbon n={pts} />
-          </span>
+        <span className="avatar-wrap">
+          <Avatar color={p.color} self={me} size={56} />
+          <Ribbon n={pts} />
+        </span>
+        <div className="prow-mid">
+          <div className="prow-top">
+            <span className="prow-name" title={p.name}>
+              {p.name}
+            </span>
+            {turn && <TurnPill v={v} id={id} />}
+          </div>
+          <WinBar v={v} id={id} className="prow-win" />
         </div>
-        <CountCard res="unknown" n={cards} alert={me && cards > v.settings.discard_limit} className="pcard pcard-a" />
-        <CountCard res="dev" n={devs} className="pcard pcard-b" />
-        <Stat slot="a" icon={<KnightsIcon />} n={p.knights} held={v.largest_army_holder === id} title={v.largest_army_holder === id ? 'Largest Army: knights played' : 'Knights played'} />
-        <Stat slot="b" icon={<RoadLenIcon />} n={p.longest_road} held={v.longest_road_holder === id} title={v.longest_road_holder === id ? 'Longest Road: roads in a row' : 'Longest connected road'} />
+        <div className="prow-cards">
+          <CountCard res="unknown" n={cards} alert={me && cards > v.settings.discard_limit} className="pcard" />
+          <CountCard res="dev" n={devs} className="pcard" />
+        </div>
+        <div className="prow-stats">
+          <Stat slot="a" icon={<KnightsIcon />} n={p.knights} held={v.largest_army_holder === id} title={v.largest_army_holder === id ? 'Largest Army: knights played' : 'Knights played'} />
+          <Stat slot="b" icon={<RoadLenIcon />} n={p.longest_road} held={v.longest_road_holder === id} title={v.longest_road_holder === id ? 'Longest Road: roads in a row' : 'Longest connected road'} />
+        </div>
         <button className="chev" aria-expanded={open} aria-label={open ? 'Hide details' : 'Show details'} onClick={() => setOpen(!open)}>
           <Chevron dir={open ? 'down' : 'left'} />
         </button>
@@ -714,11 +789,6 @@ function actorOf(e: LogEvent): number | null {
   return e.type === 'timed_out' && e.kind === 'discard' ? null : e.player;
 }
 
-/** Compile-time check that `describe` handles every event; at run time an unknown one shows its name. */
-function unhandled(e: never): ReactNode {
-  return String((e as { type?: string }).type ?? 'event');
-}
-
 /** The words and icons for one entry, without the leading player (see `actorOf`). */
 function describe(e: LogEvent, v: GameView): ReactNode {
   const color = (id: number) => v.players[id].color;
@@ -742,9 +812,9 @@ function describe(e: LogEvent, v: GameView): ReactNode {
         </>
       );
     case 'setup_ended_early':
-      return 'There is no room left for more settlements; setup ends early';
+      return 'No room left for more settlements; setup ends early';
     case 'setup_complete':
-      return 'Setup complete. The game begins!';
+      return 'Setup complete.';
     case 'rolled':
       return (
         <>
@@ -773,8 +843,6 @@ function describe(e: LogEvent, v: GameView): ReactNode {
       return `Players with more than ${e.limit} cards must discard half`;
     case 'discarded':
       return ` discarded ${e.count} cards`;
-    case 'robber_must_move':
-      return 'The robber must move';
     case 'robber_moved':
       return ' moved the robber';
     case 'stole':
@@ -787,15 +855,25 @@ function describe(e: LogEvent, v: GameView): ReactNode {
     case 'volcano_picked':
       return (
         <>
-          {' took a free '}
+          {' took a '}
           <MiniCard res={e.resource} />
           {' from the volcano'}
         </>
       );
     case 'volcano_blocked':
       return 'The robber is on the volcano: no free resources, but it still erupts';
+    case 'gold_picked':
+      return (
+        <>
+          {' took a free '}
+          <MiniCard res={e.resource} />
+          {' from the gold field'}
+        </>
+      );
+    case 'gold_blocked':
+      return 'gold resources blocked by robber';
     case 'volcano_bank_empty':
-      return 'The bank is out of cards: the rest of the volcano picks were dropped';
+      return 'The bank is out of cards: the rest of the picks were dropped';
     case 'lava_flow': {
       const where = `Lava ran down corner ${e.die}`;
       if (e.effect === 'nothing' || e.owner === null) return `${where}, but nothing was there`;
@@ -894,8 +972,6 @@ function describe(e: LogEvent, v: GameView): ReactNode {
       return ` wins with ${e.points} victory points!`;
     case 'timed_out':
       return TIMEOUT_TEXT[e.kind];
-    default:
-      return unhandled(e);
   }
 }
 

@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { Chevron, CountCard, DieFace, KnightsIcon, PersonIcon, PieceShape, RoadLenIcon, ToolIcon, isVeryDark, pieceEdge, shade } from './art';
-import { BankRow, Log } from './ui';
+import { BankRow, Log, WinBar } from './ui';
 import { GameView, luminance, total } from './types';
 
 /**
@@ -174,6 +174,7 @@ function MobilePlayer({ v, id, pieces, below }: { v: GameView; id: number; piece
               <Stat icon={<RoadLenIcon />} n={p.longest_road} held={road} title={road ? 'Longest Road: roads in a row' : 'Longest connected road'} />
             </div>
           </div>
+          <WinBar v={v} id={id} className="m-win" />
           {pieces && (
             <div className="m-ppieces" aria-label="Pieces left">
               <span title="Roads left">

@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Glyph, PieceShape, PortLabel, isVeryDark, pieceEdge, shade } from './art';
+import { DesertArt, DesertDefs, DesertRobberShade } from './DesertArt';
 import { GameView, Terrain, Vertex } from './types';
 
 const S = 64; // pixels per hex radius (board units are multiples of this)
@@ -16,10 +17,11 @@ export const STYLE: Record<Terrain, Style> = {
   pasture: { center: '#a9d02c', edge: '#86b50f', border: '#6c9610', hi: '#d6e440' },
   fields: { center: '#ffd75f', edge: '#f0b412', border: '#bb850b', hi: '#ffe58f' },
   forest: { center: '#17a047', edge: '#08893c', border: '#066a2d', hi: '#69d252' },
-  desert: { center: '#d9d09a', edge: '#c6bc7d', border: '#a39b63', hi: '#e9e2b8' },
+  desert: { center: '#F5EDDC', edge: '#E9DAC0', border: '#C2AB84', hi: '#FBF6EA' },
   volcano: { center: '#6b5b55', edge: '#4a3c38', border: '#2f2421', hi: '#9a7f74' },
+  gold: { center: '#d9a63c', edge: '#c48a2e', border: '#b46f22', hi: '#f2c747' },
 };
-export const RES_OF: Record<Terrain, number | null> = { hills: 0, forest: 1, mountains: 2, fields: 3, pasture: 4, desert: null, volcano: null };
+export const RES_OF: Record<Terrain, number | null> = { hills: 0, forest: 1, mountains: 2, fields: 3, pasture: 4, desert: null, volcano: null, gold: null };
 export const ART: Record<Terrain, { fill: string; fill2: string; stroke?: string }> = {
   hills: { fill: '#f9d3c4', fill2: '#f0b3a0', stroke: '#e48b72' },
   mountains: { fill: '#f6f8f7', fill2: '#dfe4e2', stroke: '#a7aeab' },
@@ -28,6 +30,7 @@ export const ART: Record<Terrain, { fill: string; fill2: string; stroke?: string
   forest: { fill: '#3aa24a', fill2: '#58bd5c', stroke: '#176d2b' },
   desert: { fill: '#000', fill2: '#000' },
   volcano: { fill: '#000', fill2: '#000' },
+  gold: { fill: '#000', fill2: '#000' },
 };
 
 /** Where corner `i` (0 to 5, clockwise from the upper right) of a hex of radius `r` is. The server numbers a volcano's corners `i + 1`. */
@@ -78,6 +81,44 @@ export function VolcanoArt({ cx, cy, cone = true, numbers = true, lift = true, s
             </g>
           );
         })}
+    </g>
+  );
+}
+
+/** One gold bar, centred on (0, 0) and 28 wide: a pale top face over an orange front, with a bright edge between. */
+function GoldBar({ x, y, rot = 0, k = 1 }: { x: number; y: number; rot?: number; k?: number }) {
+  return (
+    <g transform={`translate(${x} ${y}) rotate(${rot}) scale(${k})`} strokeLinejoin="round" strokeLinecap="round">
+      <path d="M-14,1 L14,1 L15.5,9 L-15.5,9 Z" fill="#f09a1a" stroke="#b5681a" strokeWidth="1.5" />
+      <path d="M-9.5,-8 L9.5,-8 L14,1 L-14,1 Z" fill="#ffd731" stroke="#b5681a" strokeWidth="1.5" />
+      <path d="M-7,-6 L7,-6 L9,-2 L-9,-2 Z" fill="#fff3a6" stroke="none" opacity=".85" />
+      <path d="M-14,1 L14,1" stroke="#ffe27a" strokeWidth="1.4" fill="none" />
+      <path d="M-13.5,5 L13.5,5" stroke="#ffb52e" strokeWidth="1.3" fill="none" opacity=".8" />
+    </g>
+  );
+}
+
+/**
+ * The gold field drawn on a hex: a small pile of gold bars above the number token, with a few orange pebbles
+ * either side. Centred on the hex at (cx, cy), at the board's scale (`S` per hex radius). `lift` adds the
+ * board's drop shadow, which only exists in the board's own `<defs>`.
+ */
+export function GoldArt({ cx, cy, lift = true, scale = S }: { cx: number; cy: number; lift?: boolean; scale?: number }) {
+  return (
+    <g transform={`translate(${cx.toFixed(1)} ${cy.toFixed(1)}) scale(${(scale / S).toFixed(4)})`}>
+      <g fill="#eaa55a" opacity=".92">
+        <ellipse cx={-36} cy={-21} rx="6.5" ry="3.6" />
+        <ellipse cx={-31} cy={-16.5} rx="3.8" ry="2.4" />
+        <ellipse cx={-41} cy={-17.5} rx="3" ry="2" />
+        <ellipse cx={36} cy={-19} rx="6.5" ry="3.6" />
+        <ellipse cx={41} cy={-14.5} rx="3.8" ry="2.4" />
+        <ellipse cx={31} cy={-14} rx="3" ry="2" />
+      </g>
+      <g filter={lift ? 'url(#lift)' : undefined}>
+        <GoldBar x={-15} y={-22} rot={-7} k={0.84} />
+        <GoldBar x={11} y={-26} rot={-30} k={0.96} />
+        <GoldBar x={-3} y={-14} rot={-2} k={0.84} />
+      </g>
     </g>
   );
 }
@@ -326,6 +367,7 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
             <stop offset="1" stopColor={STYLE[t].edge} />
           </radialGradient>
         ))}
+        <DesertDefs uid="bd" scale={S} />
         <filter id="wavy" x="-5%" y="-5%" width="110%" height="110%">
           <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="n" />
           <feDisplacementMap in="SourceGraphic" in2="n" scale="9" />
@@ -428,6 +470,7 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
               <polygon points={hexPoints(cx, cy, S * 0.935)} fill={st.border} />
             </g>
             <polygon points={hexPoints(cx, cy, S * 0.885)} fill={`url(#g-${h.terrain})`} />
+            {h.terrain === 'desert' && <DesertArt cx={cx} cy={cy} uid="bd" scale={S} />}
             <polygon points={hexPoints(cx, cy, S * 0.845)} fill="none" stroke={st.hi} strokeWidth={1.6} opacity={0.75} />
 
             {/* decorations */}
@@ -444,7 +487,7 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
                   opacity="0.85"
                 />
               ))}
-            {(h.terrain === 'hills' || h.terrain === 'mountains' || h.terrain === 'desert') && (
+            {(h.terrain === 'hills' || h.terrain === 'mountains') && (
               <g fill={shade(st.edge, h.terrain === 'hills' ? -0.18 : -0.12)} opacity=".75">
                 <ellipse cx={cx - 0.55 * S} cy={cy - 0.28 * S} rx="7" ry="3.2" />
                 <ellipse cx={cx + 0.5 * S} cy={cy - 0.3 * S} rx="6" ry="3" />
@@ -459,13 +502,7 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
               </g>
             )}
             {h.terrain === 'volcano' && <VolcanoArt cx={cx} cy={cy} numbers={false} />}
-            {h.terrain === 'desert' && (
-              <g transform={`translate(${cx + 0.22 * S} ${cy - 0.3 * S})`} fill="#7ea45a" stroke="#4f7a38" strokeWidth="1.4" strokeLinejoin="round">
-                <rect x="-4" y="-16" width="8" height="30" rx="4" />
-                <path d="M-4 -2 H-9 Q-12 -2 -12 -6 V-12 Q-12 -15 -9 -15 Q-6 -15 -6 -12 V-7 H-4Z" />
-                <path d="M4 3 H9 Q12 3 12 -1 V-8 Q12 -11 9 -11 Q6 -11 6 -8 V-3 H4Z" />
-              </g>
-            )}
+            {h.terrain === 'gold' && <GoldArt cx={cx} cy={cy} />}
 
             {/* number token */}
             {h.number !== null && (
@@ -602,6 +639,8 @@ export default function Board({ view, vertexTargets, edgeTargets, hexTargets, sh
       {(() => {
         const h = board.hexes[view.robber];
         return (
+          <>
+          {h.terrain === 'desert' && <DesertRobberShade x={h.x * S - 0.5 * S} y={h.y * S + 0.06 * S + 20} uid="bd" />}
           <g transform={`translate(${h.x * S - 0.5 * S} ${h.y * S + 0.06 * S}) scale(1.18)`} className="robber" filter="url(#drop)">
             <ellipse cx="0" cy="17" rx="15" ry="5" fill="rgba(0,0,0,.25)" />
             <path d="M-14 14 C-16 4 -9 -2 0 -2 C9 -2 16 4 14 14 C10 19 -10 19 -14 14Z" fill="url(#rob)" stroke="#7b7b7b" strokeWidth="1.8" strokeLinejoin="round" />
@@ -609,6 +648,7 @@ export default function Board({ view, vertexTargets, edgeTargets, hexTargets, sh
             <path d="M-6 -16 Q-3 -19.5 1 -19" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" opacity=".7" />
             <path d="M-9 6 Q-10 11 -6 14" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" opacity=".45" />
           </g>
+          </>
         );
       })()}
 

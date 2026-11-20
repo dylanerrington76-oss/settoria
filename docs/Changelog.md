@@ -2,12 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+### [v2026.11.20]
+added new hex 'gold'
+- added new maps Texas and Europe.
+
+### [v2026.11.19]
+added bots 
+
 ### [v2026.11.18] 
 new fairness rules
 - add new stat postgame% to the end game screen
 - Updated Port desgin
 - Harbour owners can no longer make bank-rate deals with players
 - Banned trade and mono
+
+### [v2026.11.17]
+websocket optimizations 
 
 ### [v2026.11.16]
 After a trade, the Give resource now stays selected, so repeat trades only need a new Get pick.

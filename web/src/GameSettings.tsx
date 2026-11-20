@@ -30,19 +30,19 @@ type Spec = NumSpec | ToggleSpec;
 
 const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 
-/** The settings, grouped by what they affect. Within each group the order follows the host's checklist. */
+/** The settings, grouped by what they affect. */
 const GROUPS: { title: string; items: Spec[] }[] = [
   {
     title: 'Winning',
     items: [
-      { kind: 'num', key: 'points_to_win', label: 'Points to win', unit: 'points', min: 3, max: 99, hint: 'Checked on your own turn.' },
+      { kind: 'num', key: 'points_to_win', label: 'Points to win', unit: 'points', min: 3, max: 99},
     ],
   },
   {
     title: 'Points',
     items: [
       { kind: 'num', key: 'settlement_points', label: 'Settlement points', unit: 'points', min: 0, max: 10 },
-      { kind: 'num', key: 'city_points', label: 'City points', unit: 'points', min: 0, max: 10, hint: 'What a city is worth in total, not on top of the settlement.' },
+      { kind: 'num', key: 'city_points', label: 'City points', unit: 'points', min: 0, max: 10},
       { kind: 'num', key: 'longest_road_points', label: 'Longest Road points', unit: 'points', min: 0, max: 10 },
       { kind: 'num', key: 'largest_army_points', label: 'Largest Army points', unit: 'points', min: 0, max: 10 },
       {
@@ -70,8 +70,8 @@ const GROUPS: { title: string; items: Spec[] }[] = [
       { kind: 'num', key: 'max_roads', label: 'Max roads', unit: 'roads', min: 1, max: 50, hint: 'Per player. Bridges count too.' },
       { kind: 'num', key: 'max_settlements', label: 'Max settlements', unit: 'settlements', min: 1, max: 20, hint: 'Per player.' },
       { kind: 'num', key: 'max_cities', label: 'Max cities', unit: 'cities', min: 0, max: 20, hint: 'Per player.' },
-      { kind: 'num', key: 'dev_cards', label: 'Total development cards', unit: 'cards', min: 0, max: 60, hint: 'Same mix of cards as standard, scaled to this size. Left at 25, it grows with 5 or more players (34 for 5-6, 44 for 7-8).' },
-      { kind: 'num', key: 'resource_max', label: 'Max of each resource', unit: 'cards', min: 1, max: 99, hint: 'How many of each resource the bank holds. Left at 19, it grows with 5 or more players (24 for 5-6, 30 for 7-8).' },
+      { kind: 'num', key: 'dev_cards', label: 'Total development cards', unit: 'cards', min: 0, max: 60, hint: 'Same mix of cards as standard, scaled to this size.' },
+      { kind: 'num', key: 'resource_max', label: 'Max of each resource', unit: 'cards', min: 1, max: 99, hint: 'How many of each resource the bank holds.' },
     ],
   },
   {
@@ -81,7 +81,7 @@ const GROUPS: { title: string; items: Spec[] }[] = [
         kind: 'toggle',
         key: 'bridges',
         label: 'Bridges',
-        hint: 'Build a road over a narrow stretch of water between two land corners, for 1 brick, 1 lumber and 1 ore. It uses a road piece and counts as one road for Longest Road. Only maps with such channels have places for them.',
+        hint: 'Build a road over a narrow stretch of water between two land corners, for 1 brick, 1 lumber and 1 ore. It uses a road piece and counts as one road for Longest Road',
       },
     ],
   },
@@ -95,14 +95,14 @@ const GROUPS: { title: string; items: Spec[] }[] = [
         unit: 'settlements',
         min: 1,
         max: 5,
-        hint: 'Number of settlements players begin with. Always have one road per starting settlement.',
+        hint: 'Number of settlements players begin with',
       },
     ],
   },
   {
     title: 'Robber and trading',
     items: [
-      { kind: 'num', key: 'discard_limit', label: 'Card discard limit', unit: 'cards', min: 1, max: 50, hint: 'On a 7, anyone holding more than this discards half.' },
+      { kind: 'num', key: 'discard_limit', label: 'Card discard limit', unit: 'cards', min: 1, max: 50},
       {
         kind: 'toggle',
         key: 'friendly_robber',

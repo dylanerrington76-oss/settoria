@@ -3,7 +3,8 @@
 // stripe: a hex or harbour drawn in stripes is one the game deals at random.
 import { memo } from 'react';
 import { Glyph, PortLabel, shade } from './art';
-import { ART, RES_OF, STYLE, VolcanoArt, hexPoints } from './Board';
+import { ART, GoldArt, RES_OF, STYLE, VolcanoArt, hexPoints } from './Board';
+import { DesertArt, DesertDefs } from './DesertArt';
 import { EdHex, PortKind, S } from './mapModel';
 import type { Terrain } from './types';
 
@@ -19,6 +20,7 @@ const TERRAIN_LIST = Object.keys(STYLE) as Terrain[];
 export function PieceDefs({ uid }: { uid: string }) {
   return (
     <defs>
+      <DesertDefs uid={uid} scale={S} />
       {TERRAIN_LIST.map((t) => (
         <radialGradient key={t} id={`${uid}-g-${t}`} cx="50%" cy="46%" r="62%">
           <stop offset="0" stopColor={STYLE[t].center} />
@@ -55,6 +57,7 @@ export const HexShape = memo(function HexShape({ hex, uid }: { hex: Pick<EdHex, 
       <polygon points={hexPoints(0, 0, S)} fill="#e3b86a" />
       <polygon points={hexPoints(0, 0, S * 0.935)} fill={st ? st.border : STRIPE_BLACK} />
       <polygon points={hexPoints(0, 0, S * 0.885)} fill={t ? `url(#${uid}-g-${t})` : `url(#${uid}-stripes)`} />
+      {t === 'desert' && <DesertArt cx={0} cy={0} uid={uid} scale={S} />}
       <polygon points={hexPoints(0, 0, S * 0.845)} fill="none" stroke={st ? st.hi : '#ffffff'} strokeWidth={1.6} opacity={st ? 0.75 : 0.35} />
       {t && (t === 'pasture' || t === 'fields' || t === 'forest') &&
         [-1, 1].map((d) => (
@@ -69,7 +72,7 @@ export const HexShape = memo(function HexShape({ hex, uid }: { hex: Pick<EdHex, 
             opacity="0.85"
           />
         ))}
-      {t && (t === 'hills' || t === 'mountains' || t === 'desert') && (
+      {t && (t === 'hills' || t === 'mountains') && (
         <g fill={shade(st!.edge, t === 'hills' ? -0.18 : -0.12)} opacity=".75">
           <ellipse cx={-0.55 * S} cy={-0.28 * S} rx="7" ry="3.2" />
           <ellipse cx={0.5 * S} cy={-0.3 * S} rx="6" ry="3" />
@@ -82,13 +85,7 @@ export const HexShape = memo(function HexShape({ hex, uid }: { hex: Pick<EdHex, 
         </g>
       )}
       {t === 'volcano' && <VolcanoArt cx={0} cy={0} scale={S} lift={false} />}
-      {t === 'desert' && (
-        <g transform={`translate(${0.05 * S} ${-0.04 * S}) scale(1.35)`} fill="#7ea45a" stroke="#4f7a38" strokeWidth="1.4" strokeLinejoin="round">
-          <rect x="-4" y="-16" width="8" height="30" rx="4" />
-          <path d="M-4 -2 H-9 Q-12 -2 -12 -6 V-12 Q-12 -15 -9 -15 Q-6 -15 -6 -12 V-7 H-4Z" />
-          <path d="M4 3 H9 Q12 3 12 -1 V-8 Q12 -11 9 -11 Q6 -11 6 -8 V-3 H4Z" />
-        </g>
-      )}
+      {t === 'gold' && <GoldArt cx={0} cy={0} scale={S} lift={false} />}
       {hex.number !== null && t !== 'desert' && (
         <g>
           <rect x={-21} y={0.31 * S - 20} width="42" height="40" rx="6.5" fill="#eae9e5" stroke="#00000033" />

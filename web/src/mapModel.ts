@@ -6,6 +6,7 @@
 //   striped hex   a land hex whose terrain is dealt at random:   { "q": 0, "r": 0 }
 //   desert        a land hex that is always a desert:            { "q": 0, "r": 0, "terrain": "desert" }
 //   volcano       a numbered hex that is always a volcano (its number is always a 6 or 8): { "q": 0, "r": 0, "terrain": "volcano" }
+//   gold          a numbered hex that is always gold (it takes an ordinary number): { "q": 0, "r": 0, "terrain": "gold" }
 //   port          a harbour on a coast edge, kind dealt at random: { "q": 0, "r": 0, "side": 4 }
 //
 // The pools the game deals from (`terrain_pool`, `token_pool`, the harbour `pool`) are worked out from what
@@ -68,7 +69,7 @@ export interface Meta {
 }
 
 export const PORT_KINDS: PortKind[] = ['any', 'brick', 'lumber', 'ore', 'grain', 'wool'];
-export const TERRAINS: Terrain[] = ['hills', 'forest', 'mountains', 'fields', 'pasture', 'desert', 'volcano'];
+export const TERRAINS: Terrain[] = ['hills', 'forest', 'mountains', 'fields', 'pasture', 'desert', 'volcano', 'gold'];
 /** The order in which leftover hexes go to resources when the pool can't be split evenly (as in Standard). */
 const SPARE_ORDER: Terrain[] = ['forest', 'fields', 'pasture', 'hills', 'mountains'];
 /** The 18 tokens of the standard board, in the order they are handed out when a map has fewer (or more). */
