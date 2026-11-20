@@ -23,6 +23,35 @@ The first player to join is the host. Up to 8 players can take a seat. The host 
 Normal 120s, Slow 240s; Normal is the default), can change any of the **game rules** (see below), and presses
 **Start**. 
 
+## Playing against bots
+
+Short of people? The host presses **Add bot** in the lobby to seat a computer player (the ✕ on a bot's row takes it
+away again). Bots sit at the table like anyone else, so people and bots together are still at most 8, and a game needs
+at least two seats, which can be one person and one bot. A bot is always "connected", plays whenever it is its turn
+(about half a second to a second per move, so you can follow it), and stays at the table for the next game.
+Each bot is named after a famous robot, drawn at random. Only the host can add or
+remove bots, and only in the lobby.
+
+A bot sees what a player at its seat would see. Each time it has something to do it lists the moves that are legal and
+gives each one a number (points count most, then production, then small bonuses); it plays the highest, and picks at
+random among ties. When nothing scores above ending the turn, it ends the turn, and it never takes more than 15 actions
+in one turn.
+
+| Move | Worth |
+|---|---|
+| Settlement | its point(s), plus the pips of the hexes around it, a bonus for each resource the bot doesn't produce yet and for a harbour it can use |
+| City | the extra point(s), plus the spot's pips again (a city doubles production) |
+| Road, bridge | the best corner it newly opens up (less for each extra road needed); little while a settlement can already be built |
+| Development card | a middling baseline, more when ore, grain and wool are spare and nothing else is affordable |
+| Bank trade | a share of the build it makes affordable right now; never otherwise |
+| Robber | the production of the other players' buildings on a hex, doubled for cities and weighted toward whoever is ahead; a heavy penalty for its own |
+| Steal | the player with the most cards, then the most public points |
+| Discard, volcano pick | keeps (or takes) what its best build needs |
+
+Bots play their development cards by the same numbers, never propose a trade, and decline any offer a player makes
+them (bots don't trade with people). The whole of it is in `src/bot.rs`: the numbers are constants at the top, and
+`choose` is the one function that decides a move.
+
 ## Run it with Docker
 
 No Rust or Node needed, only Docker with Compose. The image builds the client and the server itself, so it
@@ -216,6 +245,7 @@ offer earns nothing by itself.
     Dockerfile      builds the client and server and runs them on a small image (also the `tests` target)
     docker-compose.yml  `settoria` (the game), `web-dev` (hot-reloading client, profile `dev`) and `tests` (profile `test`)
     src/game.rs    all rules and timers (Game::apply validates every action, Game::tick fires timeouts) + unit and fuzz tests
+    src/bot.rs     computer players: `choose` scores every legal move and picks the best; `Driver` runs the bots' turns
     src/main.rs    lobby, WebSocket protocol, static file serving
     src/patch.rs   the difference between two JSON values, which is what a client that asks for patches is sent
     web/src        React client (Board.tsx = SVG board, ui.tsx = panels/dialogs, App.tsx = screens)
@@ -226,7 +256,7 @@ offer earns nothing by itself.
 
 ## Develop
 
-    cargo test --release                 # rules, maps, map loading and uploads, the lobby protocol, random-play fuzzing
+    cargo test --release                 # rules, maps, map loading and uploads, the lobby protocol, the bots, random-play fuzzing
     (cd web && npm test)                 # renders the lobby and log in Node and checks what they say
     (cd web && node scripts/patch-test.mjs)   # the client's half of the patch protocol (needs Node 22.18 or later)
     cargo run --release &                # server on :3000
@@ -247,7 +277,11 @@ with an `error` and nothing changes), `set_settings{settings}` (host only, befor
 `points_to_win`, `discard_limit`, `friendly_robber`, `max_roads`, `max_cities`, `max_settlements`, `dev_cards`,
 `resource_max`, `settlement_points`, `city_points`, `longest_road_points`, `largest_army_points`,
 `vp_card_points`, `longest_road_min`, `largest_army_min`, `starting_settlements`, `bank_ratio`; an invalid object
-is refused with an `error` and the lobby is re-sent with the previous values), `start`, `reset`, then game actions:
+is refused with an `error` and the lobby is re-sent with the previous values), `add_bot` (host only, before the game
+starts; seats a computer player, named at random from Bender, C-3PO, Multivac, Skynet, AM, Hal 9000 and Data, never one a person
+or another bot at the table already has; refused with an `error` when 8 seats are taken, bots included),
+`remove_bot{seat}` (host only, before the game starts; `seat` is the bot's index in the lobby's `players`; refused if
+that seat is not a bot), `start`, `reset`, then game actions:
 `roll`, `build_road{edge}`, `build_settlement{vertex}`, `build_city{vertex}`, `buy_dev`, `play_knight`,
 `play_road_building`, `play_year_of_plenty{a,b}`, `play_monopoly{resource}`, `move_robber{hex}`,
 `steal{victim}`, `discard{cards}`, `bank_trade{give,get}`, `offer_trade{give,want}` (opens another offer; refused for
@@ -277,7 +311,8 @@ as it is). `recommended_settings` is the rule set the map suggests, present only
 on, `board.style` is the map's `style` (`{sea_grid}`; the browser draws from this, never from the map's name), and the game log opens with `{type:"map_chosen", map, name}` unless it is the Standard map.
 `color` is one of the palette hex strings in `PALETTE` (`src/game.rs`, mirrored in `web/src/types.ts`). If it is
 missing the server picks the first free color; if it is taken the join is refused with `code: "color_taken"`.
-Lobby players and game-view players carry their `color`. `GET /api/lobby` returns `{"taken":[...]}` so the join
+Lobby players and game-view players carry their `color`. Lobby players also carry `connected` and `bot`; a bot is always
+`connected`. The host is always a person: if the host leaves and a bot would be first, the first person is host. `GET /api/lobby` returns `{"taken":[...]}` so the join
 screen can grey out taken colors before the socket is open.
 The view is personalised: you see your own hand and development cards, others only as counts.
 The view also carries `trades` (the open offers: `{id, from, give, want, replies}`, `replies` indexed by seat as

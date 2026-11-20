@@ -45,7 +45,7 @@ assert(v.timer.kind === 'roll' && v.timer.total_ms === 10000, 'roll clock is 10s
 assert(v.timer.remaining_ms > 8500, 'roll clock just started');
 assert(v.dice === null, 'not rolled yet');
 
-// nobody rolls. After ~10s the server rolls for them.
+// nobody rolls. After 10s the server rolls for them.
 const t = Date.now();
 while (clients[0].view.phase === 'roll' && Date.now() - t < 14000) await sleep(100);
 const waited = (Date.now() - t) / 1000;

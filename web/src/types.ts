@@ -428,6 +428,8 @@ export interface LobbyPlayer {
   name: string;
   color: string;
   connected: boolean;
+  /** A computer player (see `src/bot.rs`): the host can remove it again before the game starts. */
+  bot?: boolean;
 }
 
 /** One step of a patch's path: a key of an object, or an index into an array. */

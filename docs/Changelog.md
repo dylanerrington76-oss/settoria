@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ### [v2026.11.18] 
 new fairness rules
+- add new stat postgame% to the end game screen
 - Updated Port desgin
 - Harbour owners can no longer make bank-rate deals with players
 - Banned trade and mono

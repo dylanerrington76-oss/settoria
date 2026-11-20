@@ -13,14 +13,9 @@ use crate::validate::{validate, Report};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 
-/// Where maps are read from at startup unless `MAPS_DIR` says otherwise.
-pub const DEFAULT_MAPS_DIR: &str = "maps";
-
-/// The most files read from the maps folder.
-pub const MAX_FOLDER_FILES: usize = 10;
-
-/// The most issues written to the log for one file (a hopeless file can have a hundred).
-const LOGGED_ISSUES: usize = 20;
+pub const DEFAULT_MAPS_DIR: &str = "maps"; /// Where maps are read from at startup unless `MAPS_DIR` says otherwise.
+pub const MAX_FOLDER_FILES: usize = 10; /// The most files read from the maps folder.
+const LOGGED_ISSUES: usize = 20; /// The most issues written to the log for one file
 
 /// A map that was accepted, as the registry now holds it.
 #[derive(Clone, Debug, PartialEq, Eq)]

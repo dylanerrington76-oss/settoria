@@ -574,6 +574,17 @@ pub struct VpBreakdown {
     pub longest_road: usize,
 }
 
+impl VpBreakdown {
+    /// The points every player can see: everything except the hidden Victory Point cards.
+    pub fn public(&self) -> usize {
+        self.settlements + self.cities + self.largest_army + self.longest_road
+    }
+
+    pub fn total(&self) -> usize {
+        self.public() + self.dev_cards
+    }
+}
+
 #[derive(Serialize)]
 pub struct PlayerView {
     pub id: PlayerId,
@@ -1124,49 +1135,38 @@ impl Game {
         best
     }
 
+    /// Points visible to everyone: buildings and the two awards, but not Victory Point cards.
     pub fn vp_public(&self, p: PlayerId) -> usize {
-        let mut vp = 0;
-        for b in self.buildings.iter().flatten() {
-            if b.owner == p {
-                vp += if b.city { self.settings.city_points } else { self.settings.settlement_points } as usize;
-            }
-        }
-        if self.longest_road_holder == Some(p) {
-            vp += self.settings.longest_road_points as usize;
-        }
-        if self.largest_army_holder == Some(p) {
-            vp += self.settings.largest_army_points as usize;
-        }
-        vp
+        self.vp_breakdown(p).public()
+    }
+
+    /// Every point `p` holds, hidden Victory Point cards included.
+    pub fn vp_total(&self, p: PlayerId) -> usize {
+        self.vp_breakdown(p).total()
     }
 
     /// The parts of `vp_total(p)`: points from settlements, cities, Victory Point cards and the two awards.
+    /// The one place points are counted; `vp_public` and `vp_total` are sums of these parts.
     pub fn vp_breakdown(&self, p: PlayerId) -> VpBreakdown {
+        let s = &self.settings;
         let (mut settlements, mut cities) = (0, 0);
-        for b in self.buildings.iter().flatten() {
-            if b.owner == p {
-                if b.city {
-                    cities += self.settings.city_points as usize;
-                } else {
-                    settlements += self.settings.settlement_points as usize;
-                }
+        for b in self.buildings.iter().flatten().filter(|b| b.owner == p) {
+            if b.city {
+                cities += s.city_points as usize;
+            } else {
+                settlements += s.settlement_points as usize;
             }
         }
         let pl = &self.players[p];
-        let cards = pl.dev[DevCard::VictoryPoint] as usize + pl.dev_new[DevCard::VictoryPoint] as usize;
+        let vp_cards = pl.dev[DevCard::VictoryPoint] as usize + pl.dev_new[DevCard::VictoryPoint] as usize;
+        let award = |holder: Option<PlayerId>, points: u8| if holder == Some(p) { points as usize } else { 0 };
         VpBreakdown {
             settlements,
             cities,
-            dev_cards: cards * self.settings.vp_card_points as usize,
-            largest_army: if self.largest_army_holder == Some(p) { self.settings.largest_army_points as usize } else { 0 },
-            longest_road: if self.longest_road_holder == Some(p) { self.settings.longest_road_points as usize } else { 0 },
+            dev_cards: vp_cards * s.vp_card_points as usize,
+            largest_army: award(self.largest_army_holder, s.largest_army_points),
+            longest_road: award(self.longest_road_holder, s.longest_road_points),
         }
-    }
-
-    pub fn vp_total(&self, p: PlayerId) -> usize {
-        let pl = &self.players[p];
-        let cards = pl.dev[DevCard::VictoryPoint] as usize + pl.dev_new[DevCard::VictoryPoint] as usize;
-        self.vp_public(p) + cards * self.settings.vp_card_points as usize
     }
 
     // ------------------------------------------------------------------
@@ -1617,6 +1617,13 @@ impl Game {
         self.phase = self.resume_phase();
     }
 
+    /// Put one of `p`'s road pieces on `edge`. Callers have already checked the placement is legal and
+    /// taken any payment; this is shared by setup roads, Road Building, bought roads and bridges.
+    fn place_road(&mut self, p: PlayerId, edge: usize) {
+        self.roads[edge] = Some(p);
+        self.players[p].roads_left -= 1;
+    }
+
     fn do_build_road(&mut self, p: PlayerId, edge: usize) -> Result<(), String> {
         if edge >= self.roads.len() {
             return Err("Unknown road location".into());
@@ -1628,8 +1635,7 @@ impl Game {
                 if self.roads[edge].is_some() || e.bridge || (e.a != v && e.b != v) {
                     return Err("The road must touch your new settlement".into());
                 }
-                self.roads[edge] = Some(p);
-                self.players[p].roads_left -= 1;
+                self.place_road(p, edge);
                 self.setup_vertex = None;
                 self.advance_setup();
                 Ok(())
@@ -1638,10 +1644,9 @@ impl Game {
                 if self.players[p].roads_left == 0 || self.board.edges[edge].bridge || !self.road_connected(p, edge) {
                     return Err("You can't build a road there".into());
                 }
-                self.roads[edge] = Some(p);
-                self.players[p].roads_left -= 1;
+                self.place_road(p, edge);
                 self.road_building_left -= 1;
-                self.bonus += Duration::from_secs(BONUS_SECS);
+                self.add_bonus();
                 self.update_longest_road();
                 if self.road_building_left == 0 || self.legal_roads(p).is_empty() {
                     self.road_building_left = 0;
@@ -1663,10 +1668,9 @@ impl Game {
                     return Err("You can't build a road there".into());
                 }
                 self.pay(p, &COST_ROAD);
-                self.roads[edge] = Some(p);
-                self.players[p].roads_left -= 1;
+                self.place_road(p, edge);
                 self.log(LogEvent::BuiltRoad { player: p });
-                self.bonus += Duration::from_secs(BONUS_SECS);
+                self.add_bonus();
                 self.update_longest_road();
                 Ok(())
             }
@@ -1700,10 +1704,9 @@ impl Game {
             return Err("You can't build a bridge there".into());
         }
         self.pay(p, &COST_BRIDGE);
-        self.roads[edge] = Some(p);
-        self.players[p].roads_left -= 1;
+        self.place_road(p, edge);
         self.log(LogEvent::BuiltBridge { player: p });
-        self.bonus += Duration::from_secs(BONUS_SECS);
+        self.add_bonus();
         self.update_longest_road();
         Ok(())
     }
@@ -1752,7 +1755,7 @@ impl Game {
                 self.buildings[v] = Some(Building { owner: p, city: false });
                 self.players[p].settlements_left -= 1;
                 self.log(LogEvent::BuiltSettlement { player: p });
-                self.bonus += Duration::from_secs(BONUS_SECS);
+                self.add_bonus();
                 self.update_longest_road();
                 Ok(())
             }
@@ -1792,7 +1795,7 @@ impl Game {
             None => self.players[p].settlements_left += 1,
         }
         self.log(LogEvent::BuiltCity { player: p });
-        self.bonus += Duration::from_secs(BONUS_SECS);
+        self.add_bonus();
         Ok(())
     }
 
@@ -1811,7 +1814,7 @@ impl Game {
         self.players[p].dev_new[card] += 1;
         self.players[p].stats.dev_cards_bought += 1;
         self.log(LogEvent::BoughtDevCard { player: p });
-        self.bonus += Duration::from_secs(BONUS_SECS);
+        self.add_bonus();
         Ok(())
     }
 
@@ -1917,7 +1920,7 @@ impl Game {
         self.bank[get] -= 1;
         self.players[p].hand[get] += 1;
         self.log(LogEvent::BankTrade { player: p, give, get, ratio });
-        self.bonus += Duration::from_secs(BONUS_SECS);
+        self.add_bonus();
         Ok(())
     }
 
@@ -2016,7 +2019,7 @@ impl Game {
         self.players[p].stats.trades += 1;
         self.players[with].stats.trades += 1;
         self.log(LogEvent::TradeCompleted { player: p, with });
-        self.bonus += Duration::from_secs(BONUS_SECS);
+        self.add_bonus();
         Ok(())
     }
 
@@ -2153,6 +2156,11 @@ impl Game {
         }
     }
 
+    /// Earn `BONUS_SECS` of extra clock time for the action being applied; `apply_bonus` banks it.
+    fn add_bonus(&mut self) {
+        self.bonus += Duration::from_secs(BONUS_SECS);
+    }
+
     /// Add the bonus earned by the action just applied to the turn clock, never
     /// letting it exceed the mode's starting time.
     fn apply_bonus(&mut self, now: Instant) {
@@ -2216,7 +2224,7 @@ impl Game {
                 let hot: Vec<usize> = allowed
                     .iter()
                     .copied()
-                    .filter(|&h| matches!(self.board.hexes[h].number, Some(6) | Some(8)))
+                    .filter(|&h| is_hot(self.board.hexes[h].number))
                     .collect();
                 // Normally one of the four 6/8 hexes; any allowed hex if Friendly Robber rules those out.
                 let target = hot.choose(&mut rng).copied().or_else(|| allowed.choose(&mut rng).copied());

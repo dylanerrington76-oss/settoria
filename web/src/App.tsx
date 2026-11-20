@@ -321,14 +321,39 @@ export function Lobby({
                       {p.name}
                       {i === you && <em> (you)</em>}
                       {i === 0 && <small className="muted"> host</small>}
+                      {p.bot && <small className="muted"> bot</small>}
                     </span>
                   ) : (
                     <span className="muted">Open seat</span>
+                  )}
+                  {host && p?.bot && (
+                    <button
+                      type="button"
+                      className="small"
+                      style={{ marginLeft: 'auto' }}
+                      title={`Remove ${p.name}`}
+                      aria-label={`Remove ${p.name}`}
+                      onClick={() => send({ type: 'remove_bot', seat: i })}
+                    >
+                      ✕
+                    </button>
                   )}
                 </li>
               );
             })}
           </ul>
+          {host && (
+            <button
+              type="button"
+              className="small"
+              style={{ alignSelf: 'flex-start' }}
+              disabled={players.length >= MAX_PLAYERS}
+              title={players.length >= MAX_PLAYERS ? `The table is full (${MAX_PLAYERS} players, bots included)` : 'Seat a computer player'}
+              onClick={() => send({ type: 'add_bot' })}
+            >
+              Add bot
+            </button>
+          )}
           <p className="muted">
             Others join by opening <b>{location.host}</b> in their browser.
           </p>
@@ -1048,7 +1073,7 @@ function GameOver({ v, send }: { v: GameView; send: Send }) {
             </table>
           </div>
           <p className="final-note">
-            Dice income: resource cards received from dice rolls, volcano picks included. Dev cards: bought from the deck. Trades: completed trades with other players. Postgame%: each player's chance of winning judged from dice income alone, relative to the player with the most; the column adds up to 100%.
+            Dice income: resource cards received from dice rolls, volcano picks included. Dev cards: bought from the deck. Trades: completed trades with other players.
           </p>
         </div>
       </div>

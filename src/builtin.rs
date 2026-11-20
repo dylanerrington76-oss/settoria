@@ -4,12 +4,6 @@
 //! the program with `include_str!` so the binary needs nothing next to it. They are read by exactly the
 //! same code as a map someone writes (`MapDef::from_json`), so a custom map is never second-class.
 //!
-//! * **Standard**: the base-game board (19 hexes, 18 number tokens, 9 harbours), dealt afresh every game.
-//! * **Earth**: 81 hexes on 7 islands, 27 harbours, and a Sahara of three desert hexes that is always in
-//!   the same place.
-//! * **USA**: 144 hexes in the shape of the United States, one island, 25 fixed harbour spots whose kinds are
-//!   dealt each game, and one desert dealt anywhere.
-//!
 //! The order of the hexes in a file decides how corners and sides are numbered, which is why the files
 //! list them in a fixed order. Nothing depends on that except the numbering itself (a test pins it).
 
@@ -38,9 +32,7 @@ fn parsed() -> &'static [(&'static str, MapDef)] {
         BUILTIN_MAPS
             .iter()
             .map(|&(id, text)| {
-                // The files are compiled in, and the tests read every one, so this can only fire for a
-                // binary built from a broken file.
-                let def = MapDef::from_json(text).unwrap_or_else(|e| panic!("the built-in map `{id}` is not valid: {e}"));
+                let def = MapDef::from_json(text).unwrap_or_else(|e| panic!("failed to load built-in map `{id}`: {e}"));
                 (id, def)
             })
             .collect()
@@ -52,13 +44,11 @@ pub fn builtin(id: &str) -> Option<&'static MapDef> {
     parsed().iter().find(|(i, _)| *i == id).map(|(_, def)| def)
 }
 
-/// The standard map as a value to change in a test.
 #[cfg(test)]
 pub fn standard_def() -> MapDef {
     builtin("standard").expect("built in").clone()
 }
 
-/// The Earth map as a value to change in a test.
 #[cfg(test)]
 pub fn earth_def() -> MapDef {
     builtin("earth").expect("built in").clone()

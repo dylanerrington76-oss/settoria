@@ -1,4 +1,5 @@
 mod board;
+mod bot;
 mod builtin;
 mod game;
 mod log_event;
@@ -65,6 +66,9 @@ enum Control {
     SetSettings { settings: Settings },
     /// Host only, before the game starts: pick the map, by the id the lobby lists it under.
     SetMap { map: String },
+    AddBot,
+    /// Host only, before the game starts: take the bot in seat `seat` away again.
+    RemoveBot { seat: usize },
     /// After a game ends: return everyone to the lobby for a new game.
     Reset,
 }
@@ -80,7 +84,9 @@ enum ClientMsg {
 struct LobbyPlayer {
     name: String,
     color: String,
+    /// A bot always counts as connected: there is nobody behind it to lose.
     connected: bool,
+    bot: bool,
 }
 
 #[derive(Serialize)]
@@ -127,6 +133,9 @@ struct Seat {
     /// sent a whole view, and again whenever it must be sent one afresh (it reconnects, asks to resync, or the
     /// game ends).
     synced: Option<Synced>,
+    /// A computer player (`bot.rs`). It has no connection (`tx` is `None`) and its token is never given to anyone,
+    /// but it is not "away": the game plays it itself (see `Room::tick_at`).
+    bot: bool,
 }
 
 /// What a seat that asks for patches has been sent, so the next message can be the difference.
@@ -236,6 +245,8 @@ struct Room {
     /// Every map the server can play. Shared, with a lock of its own, so looking one up never waits on this
     /// room's lock for long and never makes the room wait on it.
     maps: SharedMaps,
+    /// Moves the bots' seats in the game in progress, at a pace people can follow. Started afresh with each game.
+    bots: bot::Driver,
 }
 
 impl Default for Room {
@@ -247,6 +258,7 @@ impl Default for Room {
             settings: Settings::default(),
             map: builtin::DEFAULT_MAP.to_string(),
             maps: maps::shared_with_builtins(),
+            bots: bot::Driver::new(Instant::now(), &mut rand::thread_rng()),
         }
     }
 }
@@ -270,9 +282,26 @@ impl Room {
         self.seats.position(|s| s.token == token)
     }
 
-    /// Who is connected, by seat.
+    /// Who is connected, by seat. A bot is always there.
     fn connected(&self) -> PerPlayer<bool> {
-        self.seats.iter().map(|s| s.tx.is_some()).collect()
+        self.seats.iter().map(|s| s.tx.is_some() || s.bot).collect()
+    }
+
+    /// The host is whoever sits in the first seat, and a bot can't be host (it can't start the game or choose the
+    /// map). So when the host leaves and a bot would be first, the people move up ahead of the bots, keeping their
+    /// order. Nothing changes otherwise.
+    fn humans_first(&mut self) {
+        if !self.seats.get(HOST).map_or(false, |s| s.bot) {
+            return;
+        }
+        let mut all = Vec::new();
+        while !self.seats.is_empty() {
+            all.push(self.seats.remove(HOST));
+        }
+        all.sort_by_key(|s| s.bot); // stable: people first, each group in the order it sat
+        for seat in all {
+            self.seats.push(seat);
+        }
     }
 
     /// Tell everyone how the table stands: the lobby, or the game (see `update_seat` for what a seat is sent).
@@ -293,7 +322,7 @@ impl Room {
                 let players: Vec<LobbyPlayer> = self
                     .seats
                     .iter()
-                    .map(|s| LobbyPlayer { name: s.name.clone(), color: s.color.to_string(), connected: s.tx.is_some() })
+                    .map(|s| LobbyPlayer { name: s.name.clone(), color: s.color.to_string(), connected: s.tx.is_some() || s.bot, bot: s.bot })
                     .collect();
                 for i in ids {
                     let seat = &mut self.seats[i];
@@ -377,6 +406,7 @@ impl Room {
                     tx: Some(tx.clone()),
                     delta,
                     synced: None,
+                    bot: false,
                 });
                 send(tx, &ServerMsg::Welcome { token: &t });
                 *token = Some(t);
@@ -415,6 +445,8 @@ impl Room {
                 match Game::try_with_def(names, colors, self.timer, self.settings, &self.map, &def) {
                     Ok(game) => {
                         self.game = Some(game);
+                        // The bots' first move comes a moment after the game appears on everyone's screen.
+                        self.bots = bot::Driver::new(Instant::now(), &mut rand::thread_rng());
                         self.broadcast();
                     }
                     Err(e) => return error(tx, format!("Can't start on this map: {e}")),
@@ -451,6 +483,48 @@ impl Room {
                 self.map = map;
                 self.broadcast();
             }
+            ClientMsg::Control(Control::AddBot) => {
+                let Some(me) = token.as_deref().and_then(|t| self.seat_of(t)) else {
+                    return error(tx, "Join the table first");
+                };
+                if me != HOST {
+                    return error(tx, "Only the host can add a bot");
+                }
+                if self.game.is_some() {
+                    return error(tx, "The game has already started");
+                }
+                // Bots sit at the same table as everyone, so they count toward the limit.
+                if self.seats.len() >= MAX_PLAYERS {
+                    return error(tx, format!("The table is full ({MAX_PLAYERS} players, bots included)"));
+                }
+                let Some(color) = PALETTE.iter().copied().find(|c| !self.color_taken(c)) else {
+                    return error(tx, "No colors left");
+                };
+                let name = bot::bot_name(self.seats.iter().map(|s| s.name.as_str()), &mut rand::thread_rng());
+                // Nobody is ever given this token; it only has to be unlike anyone else's.
+                let t: String = (0..16)
+                    .map(|_| char::from_digit(rand::thread_rng().gen_range(0..16), 16).unwrap())
+                    .collect();
+                self.seats.push(Seat { name, color, token: t, tx: None, delta: false, synced: None, bot: true });
+                self.broadcast();
+            }
+            ClientMsg::Control(Control::RemoveBot { seat }) => {
+                let Some(me) = token.as_deref().and_then(|t| self.seat_of(t)) else {
+                    return error(tx, "Join the table first");
+                };
+                if me != HOST {
+                    return error(tx, "Only the host can remove a bot");
+                }
+                if self.game.is_some() {
+                    return error(tx, "The game has already started");
+                }
+                let at = PlayerId::new(seat);
+                if !self.seats.get(at).map_or(false, |s| s.bot) {
+                    return error(tx, "There is no bot in that seat");
+                }
+                self.seats.remove(at);
+                self.broadcast();
+            }
             ClientMsg::Control(Control::SetSettings { settings }) => {
                 let Some(me) = token.as_deref().and_then(|t| self.seat_of(t)) else {
                     return error(tx, "Join the table first");
@@ -475,7 +549,9 @@ impl Room {
                     return error(tx, "The game isn't over yet");
                 }
                 self.game = None;
-                self.seats.retain(|s| s.tx.is_some());
+                // People who left during the game lose their seats; the bots stay for the next one.
+                self.seats.retain(|s| s.tx.is_some() || s.bot);
+                self.humans_first();
                 self.broadcast();
             }
             ClientMsg::Action(action) => {
@@ -493,12 +569,20 @@ impl Room {
         }
     }
 
-    /// Fire any countdown that has run out and tell everyone if the game changed.
+    /// Fire any countdown that has run out, let a bot move if one has something to do, and tell everyone if the
+    /// game changed.
     fn tick(&mut self) {
-        let changed = match self.game.as_mut() {
-            Some(g) => g.tick(Instant::now()),
-            None => false,
-        };
+        self.tick_at(Instant::now());
+    }
+
+    /// `tick` at a given moment (so tests can make time pass).
+    fn tick_at(&mut self, now: Instant) {
+        let Some(g) = self.game.as_mut() else { return };
+        let mut changed = g.tick(now);
+        if self.seats.iter().any(|s| s.bot) {
+            let is_bot: Vec<bool> = self.seats.iter().map(|s| s.bot).collect();
+            changed |= self.bots.step(g, |p| is_bot[p.index()], now, &mut rand::thread_rng());
+        }
         if changed {
             self.broadcast();
         }
@@ -524,6 +608,8 @@ impl Room {
             self.settings = Settings::default();
             self.map = builtin::DEFAULT_MAP.to_string();
         } else {
+            // If the host was the one to go, the next person is host now (see `humans_first`).
+            self.humans_first();
             self.broadcast();
         }
     }
@@ -1501,5 +1587,301 @@ mod tests {
         let mut next = clock(90_000, 1);
         assert_eq!(steady_timer(&json!({ "timer": null }), &mut next, sent_at, now), now);
         assert_eq!(next, clock(90_000, 1));
+    }
+
+    // ------------------------------------------------------------------
+    // Bots at the table
+    // ------------------------------------------------------------------
+
+    fn lobby_names(lobby: &Value) -> Vec<String> {
+        lobby["players"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap().to_string()).collect()
+    }
+
+    fn seat_names(room: &Room) -> Vec<&str> {
+        room.seats.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    /// The names of the bots at the table, in seat order.
+    fn bot_names(room: &Room) -> Vec<&str> {
+        room.seats.iter().filter(|s| s.bot).map(|s| s.name.as_str()).collect()
+    }
+
+    /// Whether every one of these names is on the bots' list and none is there twice.
+    fn from_the_list_once(names: &[&str]) -> bool {
+        let distinct: std::collections::HashSet<&&str> = names.iter().collect();
+        names.iter().all(|n| bot::NAMES.contains(n)) && distinct.len() == names.len()
+    }
+
+    #[test]
+    fn the_host_adds_bots_and_the_lobby_shows_them() {
+        let (mut room, mut c) = table(&["Ada", "Bo"]);
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        assert!(c[0].errors().is_empty());
+
+        let lobby = c[1].latest("lobby").expect("everyone is told");
+        let names = lobby_names(&lobby);
+        assert_eq!(names[..2], ["Ada", "Bo"]);
+        let bots: Vec<&str> = names[2..].iter().map(String::as_str).collect();
+        assert_eq!(bots.len(), 2);
+        assert!(from_the_list_once(&bots), "bots are named from the list, each once: {bots:?}");
+        let flags: Vec<(bool, bool)> =
+            lobby["players"].as_array().unwrap().iter().map(|p| (p["bot"].as_bool().unwrap(), p["connected"].as_bool().unwrap())).collect();
+        assert_eq!(flags, [(false, true), (false, true), (true, true), (true, true)], "a bot is a bot, and is never away");
+        let colors: std::collections::HashSet<&str> = lobby["players"].as_array().unwrap().iter().map(|p| p["color"].as_str().unwrap()).collect();
+        assert_eq!(colors.len(), 4, "every bot gets a color of its own");
+        assert_eq!(lobby["you"], 1);
+        assert_eq!(room.seats.len(), 4);
+    }
+
+    #[test]
+    fn only_the_host_adds_and_removes_bots_and_only_before_the_game() {
+        let (mut room, mut c) = table(&["Ada", "Bo"]);
+        c[1].say(&mut room, json!({ "type": "add_bot" }));
+        let errors = c[1].errors();
+        assert!(errors.len() == 1 && errors[0].contains("host"), "{errors:?}");
+        let mut stranger = Client::new();
+        stranger.say(&mut room, json!({ "type": "add_bot" }));
+        assert!(stranger.errors()[0].contains("Join the table first"));
+        assert_eq!(room.seats.len(), 2);
+
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        c[0].heard();
+        c[1].heard();
+        c[1].say(&mut room, json!({ "type": "remove_bot", "seat": 2 }));
+        let errors = c[1].errors();
+        assert!(errors.len() == 1 && errors[0].contains("host"), "{errors:?}");
+        stranger.say(&mut room, json!({ "type": "remove_bot", "seat": 2 }));
+        assert!(stranger.errors()[0].contains("Join the table first"));
+        assert_eq!(room.seats.len(), 3);
+
+        // Only a bot can be taken away: not the host, not another person, not a seat that isn't there.
+        for seat in [0, 1, 3, 99] {
+            c[0].say(&mut room, json!({ "type": "remove_bot", "seat": seat }));
+            let errors = c[0].errors();
+            assert!(errors.len() == 1 && errors[0].contains("no bot"), "seat {seat}: {errors:?}");
+        }
+        assert_eq!(seat_names(&room)[..2], ["Ada", "Bo"]);
+        assert_eq!(bot_names(&room).len(), 1);
+
+        c[0].say(&mut room, json!({ "type": "start" }));
+        assert!(room.game.is_some(), "two people and a bot make a game");
+        c[0].heard();
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        assert!(c[0].errors()[0].contains("already started"));
+        c[0].say(&mut room, json!({ "type": "remove_bot", "seat": 2 }));
+        assert!(c[0].errors()[0].contains("already started"));
+        assert_eq!(room.seats.len(), 3);
+    }
+
+    #[test]
+    fn bots_count_toward_the_eight_seats_and_come_and_go() {
+        let (mut room, mut c) = table(&["Ada", "Bo", "Cy"]);
+        for _ in 0..5 {
+            c[0].say(&mut room, json!({ "type": "add_bot" }));
+        }
+        assert!(c[0].errors().is_empty());
+        assert_eq!(room.seats.len(), 8);
+        assert!(from_the_list_once(&bot_names(&room)));
+        let colors: std::collections::HashSet<_> = room.seats.iter().map(|s| s.color).collect();
+        assert_eq!(colors.len(), 8, "everyone, bots included, has a color of their own");
+
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        let errors = c[0].errors();
+        assert!(errors.len() == 1 && errors[0].contains("full") && errors[0].contains('8'), "{errors:?}");
+        let mut late = Client::new();
+        late.say(&mut room, json!({ "type": "join", "name": "Late" }));
+        let errors = late.errors();
+        assert!(errors.len() == 1 && errors[0].contains("table is full"), "{errors:?}");
+        assert_eq!(room.seats.len(), 8);
+
+        // Take a bot away from the middle of the table: the seats after it move up, and another bot can sit down.
+        c[0].say(&mut room, json!({ "type": "remove_bot", "seat": 5 }));
+        assert_eq!(room.seats.len(), 7);
+        assert_eq!(bot_names(&room).len(), 4);
+        assert!(from_the_list_once(&bot_names(&room)));
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        assert_eq!(room.seats.len(), 8);
+        assert!(from_the_list_once(&bot_names(&room)));
+        assert_eq!(c[2].latest("lobby").unwrap()["players"].as_array().unwrap().len(), 8);
+    }
+
+    #[test]
+    fn a_table_of_bots_uses_every_name_once_and_a_name_that_is_freed_comes_back() {
+        let (mut room, mut c) = table(&["Ada"]);
+        for _ in 0..7 {
+            c[0].say(&mut room, json!({ "type": "add_bot" }));
+        }
+        assert!(c[0].errors().is_empty());
+        assert_eq!(room.seats.len(), 8);
+        let mut drawn = bot_names(&room);
+        drawn.sort();
+        let mut all = bot::NAMES.to_vec();
+        all.sort();
+        assert_eq!(drawn, all, "seven bots, seven names");
+
+        // Take one away: its name is free again, and it is the only one that is, so the next bot has it.
+        let gone = room.seats[PlayerId::new(3)].name.clone();
+        c[0].say(&mut room, json!({ "type": "remove_bot", "seat": 3 }));
+        assert!(!seat_names(&room).contains(&gone.as_str()));
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        assert_eq!(room.seats[PlayerId::new(7)].name, gone);
+    }
+
+    #[test]
+    fn a_bot_never_takes_a_name_a_person_has() {
+        let (mut room, mut c) = table(&["Ada", "hal 9000"]);
+        for _ in 0..6 {
+            c[0].say(&mut room, json!({ "type": "add_bot" }));
+        }
+        assert!(c[0].errors().is_empty());
+        assert_eq!(room.seats.len(), 8);
+        let bots = bot_names(&room);
+        assert!(from_the_list_once(&bots), "{bots:?}");
+        assert!(bots.iter().all(|n| !n.eq_ignore_ascii_case("hal 9000")), "{bots:?}");
+    }
+
+    #[test]
+    fn a_game_with_bots_lists_them_as_present() {
+        let (mut room, mut c) = table(&["Ada"]);
+        for _ in 0..3 {
+            c[0].say(&mut room, json!({ "type": "add_bot" }));
+        }
+        c[0].say(&mut room, json!({ "type": "start" }));
+        assert!(room.game.is_some());
+        let view = c[0].latest("game").expect("a game message")["view"].clone();
+        let players = view["players"].as_array().unwrap();
+        assert_eq!(players.len(), 4);
+        assert!(players.iter().all(|p| p["connected"] == true), "{players:?}");
+    }
+
+    #[test]
+    fn the_host_is_always_a_person() {
+        // Seats: Ada (host), a bot, Bo.
+        let (mut room, mut c) = table(&["Ada"]);
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        let mut bo = Client::new();
+        bo.say(&mut room, json!({ "type": "join", "name": "Bo" }));
+        bo.heard();
+        let bot = room.seats[PlayerId::new(1)].name.clone();
+        assert_eq!(seat_names(&room), ["Ada", bot.as_str(), "Bo"]);
+
+        // The host leaves: Bo, not the bot, is first now.
+        room.disconnect(c[0].token.as_deref().unwrap(), &c[0].tx);
+        assert_eq!(seat_names(&room), ["Bo", bot.as_str()]);
+        let lobby = bo.latest("lobby").expect("Bo is told");
+        assert_eq!(lobby["you"], 0);
+        assert_eq!(lobby_names(&lobby), ["Bo", bot.as_str()]);
+
+        // And Bo can do the host's things.
+        bo.say(&mut room, json!({ "type": "add_bot" }));
+        bo.say(&mut room, json!({ "type": "start" }));
+        assert!(bo.errors().is_empty());
+        assert!(room.game.is_some());
+    }
+
+    #[test]
+    fn a_table_with_no_people_left_is_forgotten_bots_and_all() {
+        let (mut room, mut c) = table(&["Ada"]);
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        room.disconnect(c[0].token.as_deref().unwrap(), &c[0].tx);
+        assert!(room.seats.is_empty());
+        assert!(room.game.is_none());
+
+        // The next person to sit down finds an empty table and is the host.
+        let mut bo = Client::new();
+        bo.say(&mut room, json!({ "type": "join", "name": "Bo" }));
+        let lobby = bo.latest("lobby").unwrap();
+        assert_eq!((lobby["you"].as_u64(), lobby_names(&lobby)), (Some(0), vec!["Bo".to_string()]));
+    }
+
+    #[test]
+    fn the_bots_stay_for_the_next_game_and_the_people_who_left_do_not() {
+        // Seats: Ada (host), a bot, Bo.
+        let (mut room, mut c) = table(&["Ada"]);
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        let mut bo = Client::new();
+        bo.say(&mut room, json!({ "type": "join", "name": "Bo" }));
+        let bot = room.seats[PlayerId::new(1)].name.clone();
+        c[0].say(&mut room, json!({ "type": "start" }));
+        assert!(room.game.is_some());
+
+        // The host drops out mid-game: the seat is kept for them, as for any player.
+        room.disconnect(c[0].token.as_deref().unwrap(), &c[0].tx);
+        assert_eq!(seat_names(&room), ["Ada", bot.as_str(), "Bo"]);
+
+        // The game ends and Bo takes everyone back to the lobby.
+        room.game.as_mut().unwrap().phase = Phase::GameOver;
+        bo.heard();
+        bo.say(&mut room, json!({ "type": "reset" }));
+        assert!(room.game.is_none());
+        assert_eq!(seat_names(&room), ["Bo", bot.as_str()], "Ada's seat is gone and Bo, a person, is first, and the bot kept its name");
+        let lobby = bo.latest("lobby").expect("Bo is back in the lobby");
+        assert_eq!(lobby["you"], 0);
+        assert_eq!(lobby["players"][1]["bot"], true);
+    }
+
+    #[test]
+    fn a_bot_plays_its_turns_when_the_clock_ticks() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        let (mut room, mut c) = table(&["Ada"]);
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        c[0].say(&mut room, json!({ "type": "start" }));
+        assert!(room.game.is_some());
+        c[0].heard();
+
+        // Ada plays her own turns (with the bot's brain, for want of a person) and the server clock plays the bot's.
+        let bot_seat = PlayerId::new(1);
+        let mut rng = StdRng::seed_from_u64(3);
+        let mut now = Instant::now();
+        let mut acted = 0;
+        for _ in 0..600 {
+            now += Duration::from_secs(1);
+            let g = room.game.as_mut().unwrap();
+            if g.phase == Phase::GameOver {
+                break;
+            }
+            if g.current != HOST {
+                acted = 0;
+            }
+            match bot::choose(g, HOST, acted, &mut rng) {
+                Some(action) => {
+                    let (ends, on_turn) = (matches!(action, Action::EndTurn), g.current == HOST);
+                    g.apply_at(HOST, action, now).expect("a legal move");
+                    acted = if ends { 0 } else { acted + u32::from(on_turn) };
+                    room.broadcast();
+                }
+                None => room.tick_at(now),
+            }
+        }
+        let g = room.game.as_ref().unwrap();
+        let bot_buildings = g.buildings.iter().flatten().filter(|b| b.owner == bot_seat).count();
+        assert!(bot_buildings >= 2, "the bot placed its starting settlements");
+        assert!(g.roads.iter().flatten().filter(|&&r| r == bot_seat).count() >= 2, "and its starting roads");
+        let rolls: u32 = g.roll_counts.iter().sum();
+        assert!(g.phase == Phase::GameOver || rolls >= 5, "the game went on ({rolls} rolls)");
+        assert!(c[0].latest("game").is_some(), "the person at the table was sent the game as it changed");
+    }
+
+    #[test]
+    fn a_bot_never_moves_for_a_person() {
+        let (mut room, mut c) = table(&["Ada"]);
+        c[0].say(&mut room, json!({ "type": "add_bot" }));
+        c[0].say(&mut room, json!({ "type": "start" }));
+        assert!(room.game.is_some());
+        // Whoever is first, the bot can place its own settlement and road and then it has to wait for Ada.
+        let mut now = Instant::now();
+        for _ in 0..40 {
+            now += Duration::from_secs(1);
+            room.tick_at(now);
+        }
+        let g = room.game.as_ref().unwrap();
+        assert_eq!(g.current, HOST, "it is Ada's move, and nobody makes it for her");
+        assert!(g.buildings.iter().flatten().all(|b| b.owner != HOST));
+        assert!(g.roads.iter().flatten().all(|&r| r != HOST));
+        assert!(g.buildings.iter().flatten().count() <= 1);
     }
 }

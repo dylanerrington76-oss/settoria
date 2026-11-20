@@ -136,6 +136,57 @@ test('a guest sees no Start button at all', () => {
   assert.ok(html.includes('Waiting for Ada to start'));
 });
 
+// ---------------------------------------------------------------- bots in the lobby
+
+const COLORS = ['#FE5100', '#613393', '#FFB81C', '#69BE28', '#0033A0', '#CC0000', '#7BAFD4', '#FFFFFF'];
+const withBots = (humans, bots) => [
+  ...people(humans),
+  ...Array.from({ length: bots }, (_, i) => ({ name: `Bot ${i + 1}`, color: COLORS[humans + i], connected: true, bot: true })),
+];
+const addBotButton = (html) => /<button[^>]*>Add bot<\/button>/.exec(html)?.[0] ?? '';
+const removeButtons = (html) => html.match(/<button[^>]*aria-label="Remove [^"]*"[^>]*>/g) ?? [];
+
+test('the host gets an Add bot button, which asks the server for a bot', () => {
+  const r = lobby({ players: people(2) });
+  const button = addBotButton(r.html);
+  assert.ok(button, 'an Add bot button');
+  assert.ok(!button.includes('disabled'));
+  assert.deepEqual(r.sent, [], 'rendering sends nothing');
+});
+
+test('a guest gets no Add bot button and no way to remove a bot', () => {
+  const html = lobby({ you: 1, players: withBots(2, 1) }).html;
+  assert.equal(addBotButton(html), '');
+  assert.deepEqual(removeButtons(html), []);
+  assert.ok(html.includes('Bot 1'), 'but they see the bot');
+});
+
+test('bots count toward the eight seats, and Add bot is greyed out when the table is full', () => {
+  assert.ok(!addBotButton(lobby({ players: withBots(2, 5) }).html).includes('disabled'), 'seven seated');
+  const full = addBotButton(lobby({ players: withBots(3, 5) }).html);
+  assert.ok(full.includes('disabled'), 'eight seated');
+  assert.match(full, /title="The table is full \(8 players, bots included\)"/);
+});
+
+test('a bot is labelled and the host can remove it, but not a person', () => {
+  const html = lobby({ players: withBots(2, 2), map: 'standard' }).html;
+  assert.equal((html.match(/<small class="muted"> computer player<\/small>/g) ?? []).length, 2, 'one label for each bot');
+  const removes = removeButtons(html);
+  assert.equal(removes.length, 2);
+  assert.ok(removes[0].includes('aria-label="Remove Bot 1"') && removes[1].includes('aria-label="Remove Bot 2"'));
+  assert.ok(!html.includes('Remove Ada') && !html.includes('Remove Bo"'), 'people are never removed from here');
+});
+
+test('bots seat like anyone: they count for Start and for the map the table needs', () => {
+  const r = lobby({ players: withBots(1, 2), map: 'standard' });
+  assert.equal(r.startText, 'Start with 3 players');
+  assert.ok(!r.startDisabled);
+  const alone = lobby({ players: people(1), map: 'standard' });
+  assert.equal(alone.startText, 'Need at least 2 players');
+  const withOne = lobby({ players: withBots(1, 1), map: 'standard' });
+  assert.equal(withOne.startText, 'Start with 2 players', 'a person and a bot can play');
+});
+
 test('a map the server did not list does not break the lobby', () => {
   for (const maps of [[], MAPS.slice(0, 2)]) {
     const r = lobby({ map: 'mystery', maps });
