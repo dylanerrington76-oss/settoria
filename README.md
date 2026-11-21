@@ -164,7 +164,7 @@ Mistakes in the JSON itself (a misspelt field, an unknown terrain) are reported 
 | `version` | Always `1`. |
 | `name`, `author` | Shown in the lobby. |
 | `players` | `{ "min": 2, "max": 8 }`, within 2 to 8 (2 to 4 if left out). |
-| `hexes` | `{ "q": 1, "r": 0 }` per land hex (axial coordinates, at most 250). Add `"terrain"` and/or `"number"` to fix them. |
+| `hexes` | `{ "q": 1, "r": 0 }` per land hex (axial coordinates, at most 500). Add `"terrain"` and/or `"number"` to fix them. |
 | `terrain_pool` | Terrains dealt to the hexes whose terrain isn't fixed: `{ "forest": 4, "desert": 1, ... }`. Must add up to exactly that many hexes. |
 | `token_pool` | Number tokens dealt to the producing hexes whose number isn't fixed: `{ "6": 2, ... }` (2 to 12, never 7). |
 | `ports` | `{ "mode": "fixed", "spots": [{ "q", "r", "side" }], "pool": { "any": 4, "ore": 1, ... } }`, or `{ "mode": "ring", "spacing": [3,4,...], "pool": {...} }` for a single island (gaps between harbours, in coast edges, adding up to the coast's length). A spot may fix its `"kind"`. Sides run clockwise from the east: 0 east, 1 south-east, 2 south-west, 3 west, 4 north-west, 5 north-east. |

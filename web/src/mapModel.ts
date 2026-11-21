@@ -76,7 +76,7 @@ const SPARE_ORDER: Terrain[] = ['forest', 'fields', 'pasture', 'hills', 'mountai
 const TOKEN_ORDER = [6, 5, 9, 4, 10, 8, 3, 11, 5, 9, 6, 4, 10, 8, 3, 11, 2, 12];
 
 // Limits the server enforces (src/map_def.rs).
-export const MAX_HEXES = 250;
+export const MAX_HEXES = 500;
 export const MAX_COORD = 100;
 export const MAX_MAP_BYTES = 256 * 1024;
 export const MAX_NAME_CHARS = 32;

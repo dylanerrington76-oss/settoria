@@ -33,7 +33,7 @@ use std::marker::PhantomData;
 /// The only file format version this build reads.
 pub const MAP_FORMAT_VERSION: u32 = 1;
 /// Most hexes a map may have (Earth has 81). Keeps generation and rendering cheap.
-pub const MAX_HEXES: usize = 250;
+pub const MAX_HEXES: usize = 500;
 /// Hex coordinates must lie in `-MAX_COORD..=MAX_COORD`.
 pub const MAX_COORD: i32 = 100;
 /// Biggest map file that is read. Earth is about 3 KB as JSON.

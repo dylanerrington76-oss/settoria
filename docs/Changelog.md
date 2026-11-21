@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+### [v2026.11.21]
+increased max map hex size
+- refactored validate.rs god class
+
 ### [v2026.11.20]
 added new hex 'gold'
 - added new maps Texas and Europe.

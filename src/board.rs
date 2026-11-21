@@ -1376,21 +1376,21 @@ mod tests {
         assert!(matches!(err(&d), MapError::TokenPlacementFailed { .. }));
         assert!(t.elapsed().as_secs() < 10, "gave up too slowly: {:?}", t.elapsed());
 
-        // the biggest map allowed, with a pool that can't be spread: 2 numbers across ~250 touching hexes
+        // the biggest map allowed, with a pool that can't be spread: 2 numbers across ~500 touching hexes
         let mut d = flower();
         d.hexes.clear();
-        for r in 0..16 {
-            for q in 0..16 {
+        for r in 0..23 {
+            for q in 0..23 {
                 d.hexes.push(HexDef::at(q - r / 2, r));
             }
         }
-        assert_eq!(d.hexes.len(), 256);
+        assert_eq!(d.hexes.len(), 529);
         d.hexes.truncate(MAX_HEXES);
         d.terrain_pool = BTreeMap::from([(Terrain::Forest, MAX_HEXES as u32 - 1), (Terrain::Desert, 1)]);
-        d.token_pool = BTreeMap::from([(5, 125), (9, MAX_HEXES as u32 - 126)]);
+        d.token_pool = BTreeMap::from([(5, MAX_HEXES as u32 / 2), (9, MAX_HEXES as u32 / 2 - 1)]);
         let t = std::time::Instant::now();
         assert!(matches!(err(&d), MapError::TokenPlacementFailed { .. }));
-        assert!(t.elapsed().as_secs() < 10, "gave up too slowly on a big map: {:?}", t.elapsed());
+        assert!(t.elapsed().as_secs() < 30, "gave up too slowly on a big map: {:?}", t.elapsed());
     }
 
     #[test]
