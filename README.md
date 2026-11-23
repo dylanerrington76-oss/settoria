@@ -1,15 +1,20 @@
 # Settoria
 
-Catan for 2 to 8 players on a local network, on either the standard board or costum maps.
-The Standard board is for 2 to 4 players; Earth and USA (and any map that says so) seat up to 8.
+Catan for 2 to 8 players on a local network, on the standard board or on custom maps. Everyone plays in a browser; one
+computer runs the server.
+
+- **2 to 8 players**, with CPU players to fill empty seats.
+- **Maps**: Standard (2 to 4 players), Earth and USA (up to 8), plus any map you make with the built-in map editor or write
+  as a JSON file. Custom maps can use volcano and gold hexes.
+- **Game rules** the host can switch on or tune in the lobby: bridges, Friendly Robber, and sixteen numbers (points to win,
+  piece limits, bank ratio, ...).
+- **Fair trading**: harbour owners can't make bank-rate deals with players, and a Monopoly is locked after you give away
+  cards in trades.
+- **Server-run clocks**, so a dropped connection never stalls the table, and a reloaded tab rejoins its seat by itself.
 
 ## Run it
 
-build the frontend
-
-
-Needs Rust (1.75+). Node is only needed to rebuild the frontend; a prebuilt
-copy is already in `web/dist`.
+Needs Rust (1.75+). Node is only needed to rebuild the frontend; a prebuilt copy is already in `web/dist`.
 
     cargo run --release          # or ./run.sh to rebuild the frontend first
 
@@ -18,335 +23,53 @@ The server prints two addresses:
     This computer:  http://localhost:3000
     Other devices:  http://192.168.x.x:3000   <- share this one
 
-Everyone opens the address in a browser, enters a name, picks color and takes a seat.
-The first player to join is the host. Up to 8 players can take a seat. The host picks the **map** (any map in the lobby's list: Standard, Earth and USA to begin with; maps for another number of players than are seated are greyed out, so 5 to 8 players play on Earth or USA), the **turn timer** (Very Fast 30s, Fast 60s,
-Normal 120s, Slow 240s; Normal is the default), can change any of the **game rules** (see below), and presses
-**Start**. 
+Everyone opens the address in a browser, enters a name, picks a color and takes a seat. The first player to join is the
+host. The host picks the **map** and the **turn timer**, can change any of the **game rules**, adds **bots** if people are
+short, and presses **Start**. Maps meant for another number of players than are seated are greyed out, so 5 to 8 players
+play on Earth or USA.
 
-## Playing against bots
+### With Docker
 
-Short of people? The host presses **Add bot** in the lobby to seat a computer player (the ✕ on a bot's row takes it
-away again). Bots sit at the table like anyone else, so people and bots together are still at most 8, and a game needs
-at least two seats, which can be one person and one bot. A bot is always "connected", plays whenever it is its turn
-(about half a second to a second per move, so you can follow it), and stays at the table for the next game.
-Each bot is named after a famous robot, drawn at random. Only the host can add or
-remove bots, and only in the lobby.
-
-A bot sees what a player at its seat would see. Each time it has something to do it lists the moves that are legal and
-gives each one a number (points count most, then production, then small bonuses); it plays the highest, and picks at
-random among ties. When nothing scores above ending the turn, it ends the turn, and it never takes more than 15 actions
-in one turn.
-
-| Move | Worth |
-|---|---|
-| Settlement | its point(s), plus the pips of the hexes around it, a bonus for each resource the bot doesn't produce yet and for a harbour it can use |
-| City | the extra point(s), plus the spot's pips again (a city doubles production) |
-| Road, bridge | the best corner it newly opens up (less for each extra road needed); little while a settlement can already be built |
-| Development card | a middling baseline, more when ore, grain and wool are spare and nothing else is affordable |
-| Bank trade | a share of the build it makes affordable right now; never otherwise |
-| Robber | the production of the other players' buildings on a hex, doubled for cities and weighted toward whoever is ahead; a heavy penalty for its own |
-| Steal | the player with the most cards, then the most public points |
-| Discard, volcano pick | keeps (or takes) what its best build needs |
-
-Bots play their development cards by the same numbers, never propose a trade, and decline any offer a player makes
-them (bots don't trade with people). The whole of it is in `src/bot.rs`: the numbers are constants at the top, and
-`choose` is the one function that decides a move.
-
-## Run it with Docker
-
-No Rust or Node needed, only Docker with Compose. The image builds the client and the server itself, so it
-doesn't use the prebuilt `web/dist`.
+No Rust or Node needed, only Docker with Compose. The image builds the client and the server itself.
 
     docker compose up --build            # the game on http://localhost:3000
 
-Friends on your network open `http://<this computer's address>:3000`; the lobby shows the right address. The server's
-startup log can't see the host's address from inside the container, so to have it print a usable "Other devices" link
-copy `.env.example` to `.env` and set `ADVERTISE_HOST` (and `PORT`, to serve on another port). Allow the port through the
-host's firewall if other devices can't connect.
+Friends on your network open `http://<this computer's address>:3000`. The server can't see the host's address from inside
+the container, so to have it print a usable "Other devices" link, copy `.env.example` to `.env` and set `ADVERTISE_HOST`.
+Allow the port through the host's firewall if other devices can't connect. All the Docker commands (dev client, tests,
+checking a map) are in [Development](docs/Development.md#docker).
 
-| Command | What it does |
-|---|---|
-| `docker compose up --build` | builds and starts the game (restarts itself unless stopped with `down`) |
-| `docker compose down` | stops it |
-| `docker compose --profile dev up` | also starts the hot-reloading client on http://localhost:5173, proxied to the game server; edit files in `web/src` and the browser updates |
-| `docker compose --profile test run --rm tests` | runs `cargo test --release` in the build image |
-| `docker compose run --rm settoria validate /app/maps/my-map.json` | checks a map file (see *Maps*) |
+The game keeps its state in memory only: stopping the server ends the game.
 
-Maps: `./maps` is mounted into the container read-only, so a `*.json` file put there is loaded after
-`docker compose restart settoria`. The game keeps its state in memory only: stopping the container ends the game.
+## Playing against bots
 
-Options (environment variables): `PORT` (default 3000), `STATIC_DIR` (default `web/dist`), `MAPS_DIR`
-(default `maps`: the folder custom maps are read from, see *Maps*).
-If other devices can't connect, allow port 3000 through the host's firewall.
-
-Reloading a tab, or a dropped connection, rejoins the same seat automatically.
+Short of people? The host presses **Add bot** in the lobby. Bots sit at the table like anyone else (people and bots are
+at most 8 together, and a game needs at least two seats), play by the same rules and clocks, and stay for the next game.
+They use the bank but never trade with players. How they choose their moves is in [Bots](docs/Bots.md).
 
 ## Maps
 
-Current available base maps:
+**Standard**, **Earth** (81 hexes on 7 islands) and **USA** (140 hexes) come with the game. You can add your own:
 
-**Standard**: the base-game board, randomised every game (described under *Rules implemented*).
+- build one in the **map editor**, linked at the bottom of the lobby, and download the file;
+- or write the JSON by hand and check it with `cargo run --release -- validate my-map.json`;
+- put the file in `maps/` and restart the server, or upload it from the lobby.
 
-**Earth**: 81 hexes on 7 islands with 27 harbours.
+Volcano and gold hexes, harbours, number tokens and recommended rules are all part of a map file. Everything about maps is
+in [Maps](docs/Maps.md), including the two extra map files, Texas and Europe, that are in `maps/builtin/` but not yet built in.
 
-**USA**: 144 hexes in the shape of the United States, as one big island with 25 harbours.
+## Documentation
 
-### Map editor
-
-The **map editor** link at the bottom of the lobby (`/map-editor`) builds a map file without writing JSON. Drag pieces from the
-bar onto the blue sea and move them around; drag a piece back onto the bar (or select it and press Delete) to remove it.
-Ctrl+Z / Ctrl+Shift+Z undo and redo, the wheel zooms and dragging the water pans.
-
-| Piece | In the file |
+| Read | For |
 |---|---|
-| Striped hex (red and black) | a hex whose terrain is dealt at random: any resource, or a desert |
-| Desert | a hex with `"terrain": "desert"` |
-| Port | a harbour on the coast of a hex, its kind dealt at random (a port can only sit on a coast edge; a hex placed against it removes it) |
+| [Rules](docs/Rules.md) | How the game plays: setup, a turn, volcano and gold, bridges, trading, development cards, every game setting, and the timers. |
+| [Maps](docs/Maps.md) | The maps that come with the game, the map editor, the map file format, adding maps, and `validate`. |
+| [Bots](docs/Bots.md) | Using bots, and how they decide. |
+| [Protocol](docs/Protocol.md) | The WebSocket messages, the game view, patches, the HTTP routes and the board on the wire. |
+| [Architecture](docs/Architecture.md) | How the code is organised, how a move travels, and recipes for adding a hex type, a setting or an action. |
+| [Development](docs/Development.md) | Building, running, tests, Docker, configuration, and releasing. |
+| [Changelog](docs/Changelog.md) | What changed, newest first. This file is also shown in the game, so it is written for players. |
 
-Striped means "dealt at random" everywhere in the editor. The `terrain_pool`, `token_pool` and harbour `pool` are worked out
-from what is on the map, so they always add up: resources are shared out evenly (Standard's 4/4/4/3/3 split when the
-numbers don't divide), number tokens follow the Standard set, and about a fifth of the harbours are 3:1. **Settings** sets the
-author, the player range (by default worked out from how many starting settlements fit) and how many of the striped hexes
-become deserts (by default one if you placed no desert yourself). The editor runs the same checks as `validate` (name, room for
-the starting settlements, and so on) and only offers **Download** when the map would be accepted; problems and notes are listed
-from the status button.
+## License
 
-**Import** (or dropping a file on the page) opens an existing map file to edit, such as the ones in `maps/builtin`. Fixed
-terrain, numbers, harbour kinds, `robber_start`, `recommended_settings` and the pools are kept, and a map that is opened and saved
-without changes comes out the same. Maps with `"mode": "ring"` harbours are opened with the harbours at fixed positions.
-
-### Map files (work in progress)
-
-A map is a `MapDef` (`src/map_def.rs`) written as JSON. Standard, Earth and USA are map files like any other:
-`maps/builtin/standard.json`, `maps/builtin/earth.json` and `maps/builtin/usa.json`, compiled into the program (so the binary needs
-nothing next to it) and read by the same code as a map you write. They make good templates: Standard
-shows a single island with `"ring"` harbours, Earth shows fixed harbours, a fixed desert and a constraint, USA shows a
-large single island with fixed harbour spots and every terrain, token and harbour kind dealt at random.
-(The order of the hexes in a file decides how corners and sides are numbered, so the built-in files keep a
-fixed order; it doesn't matter for a map of your own.)
-
-Write one and check it:
-
-    cargo run --release -- validate examples/maps/archipelago.json [more.json ...]
-
-#### Putting your maps in the lobby
-
-**From a folder.** When the server starts it reads every `*.json` file directly inside `MAPS_DIR` (default
-`maps/`; folders under it are not searched, so `maps/builtin/`, which holds the source of the two built-in
-maps, is not loaded twice; files starting with `.` are ignored). For each file it checks the size (256 KB at
-most), parses it and validates it exactly as `validate` does, then adds it to the lobby. Files are read in
-name order, up to 100 of them, so the same folder gives the same ids every time.
-
-A file that is no good never stops the server. It is logged to stderr with its name and every issue, then
-skipped, and the startup banner says what happened:
-
-    maps: skipped foo.json: the map has no hexes
-      Maps folder:    maps: Loaded 3 maps, skipped 1 (foo.json: the map has no hexes)
-
-The id of a map is its file name without `.json`, made safe (`My Map.json` is `my-map`). If an id or a name is
-already taken (by a built-in map, or by another file) a number is added: `earth.json` holding a map called
-"Earth" loads as `earth-2`, "Earth (2)". Names are compared without regard to case. Built-in maps are never
-replaced.
-
-**By upload.** The host can add a map while the server runs with `POST /api/maps`; see *Protocol*. Uploaded
-maps are kept in memory only (they are gone when the server stops), and at most 10 can be uploaded between
-restarts.
-
-Whichever way a map arrives, its `name` and `author` are at most 32 characters of plain text (no line breaks,
-control characters or invisible characters), because the lobby shows them in small buttons.
-
-`validate` lists *every* problem in one pass. **Errors** make a map unusable; **warnings** are worth knowing
-but leave it playable. Exit status: 0 = playable, 1 = the map has errors, 2 = a file can't be read or parsed.
-Mistakes in the JSON itself (a misspelt field, an unknown terrain) are reported with line and column.
-
-| Field | Meaning |
-|---|---|
-| `version` | Always `1`. |
-| `name`, `author` | Shown in the lobby. |
-| `players` | `{ "min": 2, "max": 8 }`, within 2 to 8 (2 to 4 if left out). |
-| `hexes` | `{ "q": 1, "r": 0 }` per land hex (axial coordinates, at most 500). Add `"terrain"` and/or `"number"` to fix them. |
-| `terrain_pool` | Terrains dealt to the hexes whose terrain isn't fixed: `{ "forest": 4, "desert": 1, ... }`. Must add up to exactly that many hexes. |
-| `token_pool` | Number tokens dealt to the producing hexes whose number isn't fixed: `{ "6": 2, ... }` (2 to 12, never 7). |
-| `ports` | `{ "mode": "fixed", "spots": [{ "q", "r", "side" }], "pool": { "any": 4, "ore": 1, ... } }`, or `{ "mode": "ring", "spacing": [3,4,...], "pool": {...} }` for a single island (gaps between harbours, in coast edges, adding up to the coast's length). A spot may fix its `"kind"`. Sides run clockwise from the east: 0 east, 1 south-east, 2 south-west, 3 west, 4 north-west, 5 north-east. |
-| `robber_start` | `{ "q", "r" }`. Default: a random desert (a map with no desert must say). |
-| `constraints` | `spread_tokens` (default `true`: no equal numbers and no 6/8 touching), `deserts_avoid_fixed_deserts`. |
-| `recommended_settings` | The rules the map suggests (see *Rules*); the validator checks room for the starting settlements against them. |
-| `style` | How the browser draws the map; cosmetic only. `{ "sea_grid": true }` draws a faint hex grid across the open sea (Earth does). Unknown keys are refused. |
-
-A value that is dealt at random is written `"?"` (or left out). Besides the usual mistakes, `validate`
-works out whether the starting settlements really fit under the distance rule (exactly, not by estimate),
-and tries dealing the number tokens a few times to see whether the map can be dealt reliably.
-
-## Rules
-
-- 19 hexes, randomised every game (4 forest, 4 pasture, 4 fields, 3 hills, 3 mountains, 1 desert),
-  18 number tokens placed randomly with no 6/8 touching, 9 harbours (4 x 3:1, one 2:1 per resource).
-- Setup: settlement + road forward, then backward (then forward again with 3 or more starting settlements);
-  each player's last settlement pays out its adjacent hexes.
-  The order is randomised at the start of the game; the same order is used for the draft (forward, then
-  backward) and for every turn afterwards. The first player to place also takes the first turn.
-- Dice, production (cities pay double), bank shortage rule (if the bank can't cover a resource and more
-  than one player is owed it, nobody gets it; if only one is owed, they get what's left).
-- Rolling 7: players with more than 7 cards discard half (rounded down), move the robber, steal a random card.
-- Building: road, settlement (distance rule, must connect to your road), city; piece limits 15/5/4.
-  Opponent settlements block roads from continuing through them.
-- Bank trades at 4:1 / 3:1 / 2:1 according to your harbours.
-- Player trades: on your turn you can have several offers open at once (up to 6, each with its own give/want,
-  all shown to every other player). Each player accepts or declines each offer separately; an offer a player
-  declines disappears from their screen (you still see it marked declined). You confirm an offer with one of
-  its accepters. Completing one offer leaves the others open, except that any you can no longer pay for are
-  withdrawn, and a player who accepted but can no longer pay is asked again. Offers end with your turn.
-- Development cards (25-card deck): Knight, Road Building, Year of Plenty, Monopoly, Victory Point.
-  One per turn, not on the turn bought, may be played before rolling. Victory Point cards stay hidden.
-- Longest Road (5+, longest-path with ties and breaks handled) and Largest Army (3+ knights).
-- First to reach the points target (15 by default) on their own turn wins. 2 players use the same rules unchanged.
-- 5 to 8 players: the same rules, on a map that allows them (Earth, USA). So the shared bank and the development deck
-  don't run dry, a bank or deck the host left at the standard size (19 of each resource, 25 cards) grows with the table:
-  5 or 6 players get 24 of each resource and 34 cards, 7 or 8 get 30 and 44. Anything the host changed is left as chosen.
-
-## Timers
-
-The server owns every clock so a closed tab or dropped connection
-is auto-played like any other timeout. The clock beside the status pill shows the countdown that is
-running and turns red under 10 seconds.
-
-| What                                   | Time | If it runs out |
-| -------------------------------------- | ---- | -------------- |
-| Setup: place a settlement (all modes)  | 120s | placed on a random legal vertex |
-| Setup: place the road (all modes)      | 30s  | placed on a random legal edge next to it |
-| Roll the dice                          | 10s  | the dice are rolled for you |
-| Discard after a 7 (everyone at once)   | 20s  | each player who hasn't discarded loses random cards |
-| Move the robber                        | 20s  | placed on a random 6 or 8 hex (never the one it is on) |
-| Choose who to rob                      | 15s  | a random candidate |
-| Your turn (the **turn clock**)         | 30 / 60 / 120 / 240s by mode | the turn ends (unplaced Road Building roads are placed at random) |
-
-The roll window and the whole 7 sequence (discard, robber, steal) are **not** charged to the turn clock;
-it starts when they finish. A Knight played mid-turn pauses the turn clock for its robber move, and a
-Knight played before rolling keeps the unused part of the 10s roll window.
-
-Time bonuses are added to the turn clock and can never push it above the mode's starting time
-(e.g. +10s with 22s left on Very Fast gives 30s, not 32s): **+10s** for each road, settlement and city built,
-each development card bought, each bank trade, and each player trade that is completed (the proposer confirming
-with someone who accepted). Roads from a Road Building card count as roads. Sending, accepting or declining an
-offer earns nothing by itself.
-
-## Layout
-
-    src/map_def.rs  what a map is: `MapDef` (hexes, terrain/number pools, harbours; read from JSON) and `MapError`
-    src/builtin.rs  the built-in maps: `maps/builtin/*.json` compiled into the program
-    src/maps.rs     the map registry: every map the server can play, by id (built-ins, the maps folder, uploads)
-    src/map_loader.rs  loading maps: parse, validate, register; the maps folder at startup; what an upload uses
-    src/map_files.rs   finding and reading map files within a size cap; making ids and names safe and unique
-    src/validate.rs `validate`: every problem with a map in one pass (errors and warnings), and the `validate` command
-    src/board.rs    `Board::from_def`: deals a map's random parts, builds hex/vertex/edge geometry and harbours;
-                    a bad map is a `MapError`, never a panic or a hang (it uses the same checks as `validate`)
-    maps/builtin    the Standard, Earth and USA map files
-    examples/maps   an example map file
-    Dockerfile      builds the client and server and runs them on a small image (also the `tests` target)
-    docker-compose.yml  `settoria` (the game), `web-dev` (hot-reloading client, profile `dev`) and `tests` (profile `test`)
-    src/game.rs    all rules and timers (Game::apply validates every action, Game::tick fires timeouts) + unit and fuzz tests
-    src/bot.rs     computer players: `choose` scores every legal move and picks the best; `Driver` runs the bots' turns
-    src/main.rs    lobby, WebSocket protocol, static file serving
-    src/patch.rs   the difference between two JSON values, which is what a client that asks for patches is sent
-    web/src        React client (Board.tsx = SVG board, ui.tsx = panels/dialogs, App.tsx = screens)
-    web/src/patch.ts  applies those patches to the game view (no React); web/scripts/patch-test.mjs tests it
-    web/src/MapEditor.tsx  the map editor page; mapModel.ts reads, checks and writes map files (no React), MapPieces.tsx draws the pieces
-    scripts/smoke.mjs   end-to-end test with 3 websocket clients (server must be running)
-    scripts/timer.mjs   end-to-end check of the 10s auto-roll and clock accounting (~12s, needs a fresh server)
-
-## Develop
-
-    cargo test --release                 # rules, maps, map loading and uploads, the lobby protocol, the bots, random-play fuzzing
-    (cd web && npm test)                 # renders the lobby and log in Node and checks what they say
-    (cd web && node scripts/patch-test.mjs)   # the client's half of the patch protocol (needs Node 22.18 or later)
-    cargo run --release &                # server on :3000
-    cargo run --release -- validate examples/maps/archipelago.json   # check a map file (no server started)
-    node scripts/smoke.mjs               # end-to-end check
-    node scripts/timer.mjs               # timer check (restart the server first: it needs an empty table)
-    cd web && npm run dev                # hot-reloading client on :5173, proxies /ws to :3000
-   cd web && npm run build
-
-## Protocol (JSON over `/ws`)
-
-Client to server: `{"type":"join","name","color"?,"token"?,"delta"?}` (`delta: true` asks for patches; see *Patches*
-below), `resync` (a client that is sent patches asks for the whole view again), `set_timer{mode}` (host only, before the game starts;
-`mode` is `very_fast`, `fast`, `normal` or `slow`), `set_map{map}` (host only, before the game starts; `map` is the
-`id` of one of the maps in the lobby's `maps`, such as `standard` or `earth`; an id the server doesn't have is refused
-with an `error` and nothing changes), `set_settings{settings}` (host only, before the game starts;
-`settings` is the whole object listed under *Game rules*, with the field names of `Settings` in `src/game.rs`:
-`points_to_win`, `discard_limit`, `friendly_robber`, `max_roads`, `max_cities`, `max_settlements`, `dev_cards`,
-`resource_max`, `settlement_points`, `city_points`, `longest_road_points`, `largest_army_points`,
-`vp_card_points`, `longest_road_min`, `largest_army_min`, `starting_settlements`, `bank_ratio`; an invalid object
-is refused with an `error` and the lobby is re-sent with the previous values), `add_bot` (host only, before the game
-starts; seats a computer player, named at random from Bender, C-3PO, Multivac, Skynet, AM, Hal 9000 and Data, never one a person
-or another bot at the table already has; refused with an `error` when 8 seats are taken, bots included),
-`remove_bot{seat}` (host only, before the game starts; `seat` is the bot's index in the lobby's `players`; refused if
-that seat is not a bot), `start`, `reset`, then game actions:
-`roll`, `build_road{edge}`, `build_settlement{vertex}`, `build_city{vertex}`, `buy_dev`, `play_knight`,
-`play_road_building`, `play_year_of_plenty{a,b}`, `play_monopoly{resource}`, `move_robber{hex}`,
-`steal{victim}`, `discard{cards}`, `bank_trade{give,get}`, `offer_trade{give,want}` (opens another offer; refused for
-an exact duplicate or beyond 6 open offers), `respond_trade{id,accept}`, `confirm_trade{id,with}`,
-`cancel_trade{id}` (withdraws one offer), `end_turn`. Offers are named by the `id` in the view's `trades`.
-Resources are indexed 0 brick, 1 lumber, 2 ore, 3 grain, 4 wool; bundles are 5-element arrays.
-
-Add a map (HTTP, not the socket): `POST /api/maps` with the map's JSON as the body (at most 256 KB) and the
-host's seat token, the one from `welcome`, as `Authorization: Bearer <token>`:
-
-    curl -X POST http://localhost:3000/api/maps -H "Authorization: Bearer $TOKEN" --data-binary @examples/maps/archipelago.json
-
-A good map is answered with `201` and `{"id","name","warnings"}` (`id` and `name` are what the map was added as,
-which differ from the file's if they were taken; `warnings` are the things `validate` calls warnings), and the
-lobby is sent to everyone again with the map in its list. Every failure is answered with `{"issues":[...]}` (a
-list of sentences) and a status: `401` no known token, `403` the token isn't the host's, `413` over 256 KB, `422`
-not a good map (every issue is listed, as `validate` lists them), `409` the 10-upload limit is used up.
-
-Server to client: `welcome{token}`, `lobby{you,players,timer,settings,map,maps}`, `game{seq?,view}`, `patch{seq,ops,log_from?,log?}`
-(see *Patches*), `error{message,code?}`.
-In the lobby, `map` is the id of the chosen map and `maps` lists every map the host can choose from, in the order to
-show them: `{id, name, author, hexes, players_min, players_max, builtin, recommended_settings?}`. `players_min` and
-`players_max` are who the map is meant for (`start` is refused with an `error` outside that range, and the lobby stays
-as it is). `recommended_settings` is the rule set the map suggests, present only if it suggests one; it is only ever
-*offered*: the lobby shows what it would change and the host applies it, if they want to, by sending it as
-`set_settings`. The server never applies it itself. The game view's `board.map` is the id of the map the game is
-on, `board.style` is the map's `style` (`{sea_grid}`; the browser draws from this, never from the map's name), and the game log opens with `{type:"map_chosen", map, name}` unless it is the Standard map.
-`color` is one of the palette hex strings in `PALETTE` (`src/game.rs`, mirrored in `web/src/types.ts`). If it is
-missing the server picks the first free color; if it is taken the join is refused with `code: "color_taken"`.
-Lobby players and game-view players carry their `color`. Lobby players also carry `connected` and `bot`; a bot is always
-`connected`. The host is always a person: if the host leaves and a bot would be first, the first person is host. `GET /api/lobby` returns `{"taken":[...]}` so the join
-screen can grey out taken colors before the socket is open.
-The view is personalised: you see your own hand and development cards, others only as counts.
-The view also carries `trades` (the open offers: `{id, from, give, want, replies}`, `replies` indexed by seat as
-`proposer`, `pending`, `accepted` or `declined`; the client hides offers you have declined), `order` (seat ids in turn order), `settings` (the game's rules), `timer_mode`, and `timer`: `null` or
-`{kind, player, remaining_ms, total_ms}` where `kind` is `setup_settlement`, `setup_road`, `roll`, `discard`,
-`robber`, `steal` or `turn`. `remaining_ms` is measured when the view was built, so clients count down from the
-moment the message arrives; every action (and every timeout) sends a fresh view, which also reflects bonuses.
-(A client that is sent patches is told the time again only when it isn't where that countdown has got to: see *Patches*.)
-
-### Patches
-
-By default every action sends every seat the whole `game{view}`, and the board is most of it (half of a Standard game's
-view, three quarters of Earth's or the USA's), though it never changes during a game. A client can ask for less with
-`"delta": true` in its `join`, which the browser client does. Such a seat is then sent:
-
-- `game{seq: 0, view}` first: the whole view, board and log included. It is sent again, and `seq` starts from 0 again, when
-  the seat reconnects, when it sends `resync`, and when a new game starts after a `lobby`.
-- `patch{seq, ops, log_from?, log?}` after every change, and nothing at all when nothing the seat can see has changed.
-  `seq` is one more than the last message's (a client that sees a gap, or a patch that doesn't fit, sends `resync` and
-  ignores patches until the next `game`).
-
-`ops` change the view as the client holds it, in order, and say nothing of the board (which never changes) or of
-the `log` and `log_start` (see below). An op is `[path, value]`, which sets what is at `path` to `value`, or `[path]`,
-which removes the key there. A `path` is an array of steps from the top of the view: a string is a key of an object, a
-number is an index into an array. For example `[["buildings", 17], {"owner": 1, "city": false}]` and
-`[["players", 2, "cards"], 5]`. Arrays are patched entry by entry only when that is shorter than sending them (a long
-array that is mostly `null`, like `buildings` and `roads`, or one of objects, like `players`); a short list of numbers,
-such as `hand`, comes whole, and so does an array whose length has changed (`trades`). `remaining_ms` of the `timer` is left out
-while the same countdown runs where the client has counted it to (within half a second), so it is sent when the clock
-starts, changes hands, or is given a bonus.
-
-The log is numbered, not patched: `log` holds the events the client doesn't have, the first of which is number `log_from`.
-The client appends them and keeps the newest 50, as a whole view does, and `log_start` is the number of the first it
-keeps. A client that finds `log_from` isn't where its own log ends asks for a `resync`.
-
-A client that doesn't send `delta` is sent a whole `game{view}` after every action, exactly as before, with no `seq`.
-`src/patch.rs` makes patches and `web/src/patch.ts` applies them.
+MIT, see [LICENSE.txt](LICENSE.txt).

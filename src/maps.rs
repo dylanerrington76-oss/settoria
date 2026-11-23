@@ -99,7 +99,7 @@ impl std::fmt::Display for RegistryError {
 pub const MAX_ID_LEN: usize = 64;
 
 /// The most maps the host can upload while the server runs. They are kept in memory, so this is what bounds it.
-pub const MAX_UPLOADS: usize = 5;
+pub const MAX_UPLOADS: usize = 10;
 
 fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= MAX_ID_LEN && id.chars().all(|c| c.is_ascii_alphanumeric() || "-_:.".contains(c))
@@ -221,14 +221,25 @@ pub fn ids(maps: &SharedMaps) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::{flower, DEFAULT_MAP};
+    use crate::builtin::{flower, ids_then, DEFAULT_MAP};
+    use crate::validate::report::MapWarning;
     use crate::validate::validate;
 
     #[test]
     fn it_starts_with_the_built_in_maps_in_lobby_order() {
         let r = MapRegistry::with_builtins();
         let listed: Vec<(&str, &str, MapSource)> = r.entries().iter().map(|e| (e.id.as_str(), e.name.as_str(), e.source)).collect();
-        assert_eq!(listed, vec![("standard", "Standard", MapSource::Builtin), ("earth", "Earth", MapSource::Builtin), ("usa", "USA", MapSource::Builtin)]);
+        // (the lobby order is part of what the built-in maps are, so it is written out here and nowhere else)
+        assert_eq!(
+            listed,
+            vec![
+                ("standard", "Standard", MapSource::Builtin),
+                ("earth", "Earth", MapSource::Builtin),
+                ("usa", "USA", MapSource::Builtin),
+                ("texas", "Texas", MapSource::Builtin),
+                ("europe", "Europe", MapSource::Builtin)
+            ]
+        );
     }
 
     #[test]
@@ -247,7 +258,11 @@ mod tests {
             assert_eq!(entry.name.to_lowercase(), id, "a built-in map's id is its name in lower case");
             // the maps the game ships are held to the same standard as anyone's: no errors, no warnings
             let report = validate(&entry.def, &entry.def.recommended_settings.unwrap_or_default());
-            assert!(report.errors.is_empty() && report.warnings.is_empty(), "{id}: {:?} {:?}", report.errors, report.warnings);
+            // Europe's North Africa is twelve hand-placed deserts on an island of their own: scenery, not a
+            // mistake, so it is the one warning a built-in map is allowed (and only that one, on that map).
+            let scenery = |w: &MapWarning| id == "europe" && *w == MapWarning::IslandWithoutResources { near: (-7, 4), hexes: 12 };
+            let warnings: Vec<&MapWarning> = report.warnings.iter().filter(|w| !scenery(w)).collect();
+            assert!(report.errors.is_empty() && warnings.is_empty(), "{id}: {:?} {:?}", report.errors, warnings);
         }
     }
 
@@ -256,11 +271,13 @@ mod tests {
         let maps = shared_with_builtins();
         assert_eq!(find(&maps, "earth").unwrap().hexes.len(), 81);
         assert_eq!(find(&maps, "standard").unwrap().hexes.len(), 19);
-        assert_eq!(find(&maps, "usa").unwrap().hexes.len(), 144);
+        assert_eq!(find(&maps, "usa").unwrap().hexes.len(), 140);
+        assert_eq!(find(&maps, "texas").unwrap().hexes.len(), 65);
+        assert_eq!(find(&maps, "europe").unwrap().hexes.len(), 106);
         assert!(find(&maps, "atlantis").is_none());
         assert!(find(&maps, "").is_none());
         assert!(find(&maps, "Earth").is_none(), "ids are case-sensitive");
-        assert_eq!(ids(&maps), vec!["standard", "earth", "usa"]);
+        assert_eq!(ids(&maps), ids_then(&[]));
     }
 
     #[test]
@@ -277,7 +294,7 @@ mod tests {
         assert_eq!((entry.id.as_str(), entry.name.as_str(), entry.source), ("user:flower", "Flower", MapSource::Folder));
         r.insert("up-1", MapSource::Upload, flower()).unwrap();
         let order: Vec<&str> = r.entries().iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(order, vec!["standard", "earth", "usa", "user:flower", "up-1"]);
+        assert_eq!(order, ids_then(&["user:flower", "up-1"]));
         assert_eq!(r.get("up-1").unwrap().source, MapSource::Upload);
     }
 
@@ -288,7 +305,7 @@ mod tests {
         assert_eq!(r.get("earth").unwrap().def.hexes.len(), 81, "Earth is still Earth");
         r.insert("mine", MapSource::Upload, flower()).unwrap();
         assert_eq!(r.insert("mine", MapSource::Folder, flower()).err(), Some(RegistryError::DuplicateId("mine".into())));
-        assert_eq!(r.entries().len(), 4);
+        assert_eq!(r.entries().len(), BUILTIN_MAPS.len() + 1);
         // built-in maps aren't added at runtime at all
         assert_eq!(r.insert("another", MapSource::Builtin, flower()).err(), Some(RegistryError::BuiltinSource));
     }
@@ -302,7 +319,7 @@ mod tests {
         for bad in ["", " ", "has space", "slash/inside", "back\\slash", "new\nline", "quote\"", "ünïcode", "tab\t", &"x".repeat(65), "../etc/passwd"] {
             assert_eq!(r.insert(bad, MapSource::Upload, flower()).err(), Some(RegistryError::BadId(bad.to_string())), "{bad:?}");
         }
-        assert_eq!(r.entries().len(), 3 + 3, "none of the bad ones got in");
+        assert_eq!(r.entries().len(), BUILTIN_MAPS.len() + 3, "none of the bad ones got in");
     }
 
     #[test]
@@ -316,7 +333,7 @@ mod tests {
         .join();
         assert!(maps.read().is_err(), "the lock really is poisoned");
         assert_eq!(find(&maps, "earth").unwrap().hexes.len(), 81);
-        assert_eq!(ids(&maps), vec!["standard", "earth", "usa"]);
+        assert_eq!(ids(&maps), ids_then(&[]));
     }
 
     #[test]
@@ -350,7 +367,7 @@ mod tests {
         assert_eq!(r.get("earth").unwrap().def.hexes.len(), 81);
         assert_eq!(r.get("earth").unwrap().name, "Earth");
         let order: Vec<&str> = r.entries().iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(order, vec!["standard", "earth", "usa", "earth-2", "earth-3", "earth-4", "standard-2", "other"]);
+        assert_eq!(order, ids_then(&["earth-2", "earth-3", "earth-4", "standard-2", "other"]));
     }
 
     #[test]
@@ -407,14 +424,14 @@ mod tests {
             maps.write().unwrap().add_unique("up", MapSource::Upload, named(&format!("Upload {i}"))).unwrap();
         }
         assert!(uploads_full(&maps));
-        assert_eq!(infos(&maps).len(), 3 + MAX_UPLOADS);
+        assert_eq!(infos(&maps).len(), BUILTIN_MAPS.len() + MAX_UPLOADS);
     }
 
     #[test]
     fn the_lobby_is_told_what_it_needs_about_each_map() {
         let maps = shared_with_builtins();
         let infos = infos(&maps);
-        assert_eq!(infos.len(), 3);
+        assert_eq!(infos.len(), BUILTIN_MAPS.len());
         assert_eq!(
             infos[0],
             MapInfo {

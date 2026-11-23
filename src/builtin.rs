@@ -19,10 +19,12 @@ use std::collections::BTreeMap;
 pub const DEFAULT_MAP: &str = "standard";
 
 /// Each built-in map's id and the text of its file. The id is what the lobby and the game log call it.
-pub const BUILTIN_MAPS: [(&str, &str); 3] = [
+pub const BUILTIN_MAPS: [(&str, &str); 5] = [
     ("standard", include_str!("../maps/builtin/standard.json")),
     ("earth", include_str!("../maps/builtin/earth.json")),
     ("usa", include_str!("../maps/builtin/usa.json")),
+    ("texas", include_str!("../maps/builtin/texas.json")),
+    ("europe", include_str!("../maps/builtin/europe.json")),
 ];
 
 /// The built-in maps, read once.
@@ -42,6 +44,15 @@ fn parsed() -> &'static [(&'static str, MapDef)] {
 /// A built-in map by id (`"standard"`, `"earth"`).
 pub fn builtin(id: &str) -> Option<&'static MapDef> {
     parsed().iter().find(|(i, _)| *i == id).map(|(_, def)| def)
+}
+
+/// The ids of the built-in maps in lobby order, followed by `after`: what the lobby lists when `after` are
+/// the maps that have been added since. Tests use it so that they don't each count the built-in maps.
+#[cfg(test)]
+pub fn ids_then<'a>(after: &[&'a str]) -> Vec<&'a str> {
+    let mut ids: Vec<&'a str> = BUILTIN_MAPS.iter().map(|&(id, _)| id).collect();
+    ids.extend_from_slice(after);
+    ids
 }
 
 #[cfg(test)]

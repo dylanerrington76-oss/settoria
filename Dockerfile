@@ -27,6 +27,8 @@ RUN touch src/main.rs && cargo build --release
 
 # ---------- optional: the test suite (`docker compose --profile test run --rm tests`) ----------
 FROM builder AS tests
+# The board test compares the server's corner and side numbering with this file, which the browser's test reads too.
+COPY web/scripts/board-golden.json ./web/scripts/board-golden.json
 CMD ["cargo", "test", "--release"]
 
 # ---------- 3. what actually runs ----------

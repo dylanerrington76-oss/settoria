@@ -1,4 +1,5 @@
 mod board;
+mod board_wire;
 mod bot;
 mod builtin;
 mod game;
@@ -881,13 +882,16 @@ mod tests {
         maps.as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect()
     }
 
+    /// Where the first map added after the built-in ones sits in the lobby's list.
+    const FIRST_ADDED: usize = builtin::BUILTIN_MAPS.len();
+
     #[test]
     fn the_lobby_names_the_chosen_map_and_lists_every_map() {
         let (mut room, mut c) = table(&["Ada", "Bo"]);
         room.broadcast();
         let lobby = c[1].latest("lobby").expect("a lobby message");
         assert_eq!(lobby["map"], "standard");
-        assert_eq!(ids(&lobby["maps"]), vec!["standard", "earth", "usa"]);
+        assert_eq!(ids(&lobby["maps"]), builtin::ids_then(&[]));
         let earth = &lobby["maps"][1];
         assert_eq!(earth["name"], "Earth");
         assert_eq!((earth["hexes"].as_u64(), earth["players_min"].as_u64(), earth["players_max"].as_u64()), (Some(81), Some(2), Some(8)));
@@ -895,7 +899,7 @@ mod tests {
         assert!(earth.get("recommended_settings").is_none());
         let usa = &lobby["maps"][2];
         assert_eq!(usa["name"], "USA");
-        assert_eq!((usa["hexes"].as_u64(), usa["players_min"].as_u64(), usa["players_max"].as_u64()), (Some(144), Some(2), Some(8)));
+        assert_eq!((usa["hexes"].as_u64(), usa["players_min"].as_u64(), usa["players_max"].as_u64()), (Some(140), Some(2), Some(8)));
         assert_eq!(usa["builtin"], true);
     }
 
@@ -907,8 +911,8 @@ mod tests {
         for client in &mut c {
             let lobby = client.latest("lobby").expect("everyone is told");
             assert_eq!(lobby["map"], "user:trio");
-            assert_eq!(ids(&lobby["maps"]), vec!["standard", "earth", "usa", "user:trio"], "a map added later is listed too");
-            let trio = &lobby["maps"][3];
+            assert_eq!(ids(&lobby["maps"]), builtin::ids_then(&["user:trio"]), "a map added later is listed too");
+            let trio = &lobby["maps"][FIRST_ADDED];
             assert_eq!((trio["name"].as_str(), trio["builtin"].as_bool(), trio["players_min"].as_u64()), (Some("Trio"), Some(false), Some(3)));
         }
         // and a built-in one again
@@ -1028,7 +1032,7 @@ mod tests {
         c[0].say(&mut room, json!({ "type": "set_map", "map": "user:quick" }));
         let lobby = c[1].latest("lobby").unwrap();
         assert_eq!(lobby["settings"]["points_to_win"], 15, "choosing the map did not change the rules");
-        let offered = &lobby["maps"][3]["recommended_settings"];
+        let offered = &lobby["maps"][FIRST_ADDED]["recommended_settings"];
         assert_eq!((offered["points_to_win"].as_u64(), offered["friendly_robber"].as_bool()), (Some(8), Some(true)));
         assert!(lobby["maps"][0].get("recommended_settings").is_none());
 
@@ -1165,13 +1169,13 @@ mod tests {
         assert_eq!(status, StatusCode::CREATED, "{body}");
         assert_eq!((body["id"].as_str(), body["name"].as_str()), (Some("archipelago"), Some("Archipelago")));
         assert!(body["warnings"].is_array());
-        assert_eq!(map_ids(&room), vec!["standard", "earth", "usa", "archipelago"]);
+        assert_eq!(map_ids(&room), builtin::ids_then(&["archipelago"]));
 
         // everyone at the table is sent the lobby again, with the new map in its list
         for client in &mut c {
             let lobby = client.latest("lobby").expect("the lobby is sent again");
-            assert_eq!(ids(&lobby["maps"]), vec!["standard", "earth", "usa", "archipelago"]);
-            assert_eq!(lobby["maps"][3]["builtin"], false);
+            assert_eq!(ids(&lobby["maps"]), builtin::ids_then(&["archipelago"]));
+            assert_eq!(lobby["maps"][FIRST_ADDED]["builtin"], false);
         }
     }
 
@@ -1214,7 +1218,7 @@ mod tests {
             assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
             assert!(body["issues"].as_array().unwrap().len() == 1);
         }
-        assert_eq!(map_ids(&room), vec!["standard", "earth", "usa"], "none of them added anything");
+        assert_eq!(map_ids(&room), builtin::ids_then(&[]), "none of them added anything");
 
         // the word `Bearer` can be written in any case
         let mut lower = HeaderMap::new();
@@ -1259,7 +1263,7 @@ mod tests {
             assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{junk:?}: {body}");
             assert!(!body["issues"].as_array().unwrap().is_empty(), "{junk:?}");
         }
-        assert_eq!(map_ids(&room), vec!["standard", "earth", "usa"]);
+        assert_eq!(map_ids(&room), builtin::ids_then(&[]));
     }
 
     #[tokio::test]
@@ -1303,7 +1307,7 @@ mod tests {
         let (status, body) = post_map(&room, bearer(&token), good_map_named("One too many")).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert!(body["issues"][0].as_str().unwrap().contains("10"), "{body}");
-        assert_eq!(map_ids(&room).len(), 3 + maps::MAX_UPLOADS);
+        assert_eq!(map_ids(&room).len(), builtin::BUILTIN_MAPS.len() + maps::MAX_UPLOADS);
     }
 
     #[tokio::test]
@@ -1317,7 +1321,7 @@ mod tests {
         let room = shared(room);
         let (status, _) = post_map(&room, bearer(&token), GOOD_MAP).await;
         assert_eq!(status, StatusCode::CREATED);
-        assert_eq!(map_ids(&room), vec!["standard", "earth", "usa", "archipelago"]);
+        assert_eq!(map_ids(&room), builtin::ids_then(&["archipelago"]));
         assert!(c[0].heard().is_empty(), "a game doesn't list maps, so nothing is sent");
     }
 
@@ -1464,7 +1468,10 @@ mod tests {
         c[0].say(&mut room, json!({ "type": "set_map", "map": "earth" }));
         c[0].heard();
         let (whole, biggest) = play_and_compare(&mut room, &mut c, 4, 40);
-        assert!(biggest * 10 < whole, "a patch is at most {biggest} bytes, a whole view {whole}");
+        // The biggest patch of the opening is the next player's whole list of legal settlement spots (some 250
+        // corners on Earth), which is the same size however the board is written. A whole view got smaller when
+        // the board went over the wire in its short form, so what is asked is that a patch is under a fifth of it.
+        assert!(biggest * 5 < whole, "a patch is at most {biggest} bytes, a whole view {whole}");
     }
 
     #[test]

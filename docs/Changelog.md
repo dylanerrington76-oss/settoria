@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+### [v2026.11.22]
+- boards are sent in a compact form
+
 ### [v2026.11.21]
 increased max map hex size
 - refactored validate.rs god class

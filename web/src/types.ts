@@ -248,6 +248,25 @@ export interface MapStyle {
   /** Draw a faint hex grid across the open sea. */
   sea_grid: boolean;
 }
+/**
+ * A hex as the server sends it: `[q, r, terrain, number]`. Everything else about a hex (where it is drawn, its
+ * corners and sides) follows from `q` and `r`, so the server leaves it out; see `expandBoard` in boardGeometry.ts.
+ */
+export type WireHex = [q: number, r: number, terrain: Terrain, number: number | null];
+/**
+ * The board as it comes over the socket (`impl Serialize for Board` in src/board_wire.rs): the hexes, the harbours
+ * and the few things that can't be worked out from the hexes. `expandBoard` turns it into a `BoardData`.
+ */
+export interface WireBoard {
+  map: string;
+  style: MapStyle;
+  hexes: WireHex[];
+  ports: Port[];
+  /** The bridge sites as pairs of corner ids, in edge order (left out when there are none). */
+  bridges?: [a: number, b: number][];
+  desert: number;
+}
+/** What the page works with: the board with its corners and sides worked out (see `expandBoard`). */
 export interface BoardData {
   /** Which map this is a board of: its id in the server's map list (`MapInfo.id`). */
   map: string;
@@ -437,6 +456,8 @@ export interface GameView {
   timer: TimerView | null;
   settings: Settings;
 }
+/** The view as it comes over the socket: the same, but with the board in its short form. */
+export type WireGameView = Omit<GameView, 'board'> & { board: WireBoard };
 
 export interface LobbyPlayer {
   name: string;
@@ -466,7 +487,7 @@ export type ServerMsg =
   | { type: 'welcome'; token: string }
   | { type: 'lobby'; you: number; players: LobbyPlayer[]; timer: TimerMode; settings: Settings; map: string; maps: MapInfo[] }
   /** The whole view, with the board. `seq` (0) is there when the server is sending patches, which count on from it. */
-  | { type: 'game'; seq?: number; view: GameView }
+  | { type: 'game'; seq?: number; view: WireGameView }
   | GamePatch
   | { type: 'error'; message: string; code?: string };
 

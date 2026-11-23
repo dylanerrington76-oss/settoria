@@ -2114,9 +2114,10 @@ impl Game {
             self.trades.clear();
             return;
         }
-        // The proposer may have built on a harbour since opening an offer that it now turns into a bank deal.
+        // An offer is withdrawn once its proposer can no longer pay for it, or once building on a harbour has
+        // turned it into a bank deal for them.
         let mut trades = std::mem::take(&mut self.trades);
-        trades.retain(|t| !self.bank_rate_deal(t.from, &t.give, &t.want));
+        trades.retain(|t| self.players[t.from].hand.covers(&t.give) && !self.bank_rate_deal(t.from, &t.give, &t.want));
         let players = &self.players;
         for t in &mut trades {
             for q in PlayerId::range(players.len()) {
@@ -2719,7 +2720,9 @@ mod tests {
             let p = g.current;
             match g.phase {
                 Phase::GameOver => break,
-                Phase::Setup => unreachable!(),
+                // A free pick beside a last starting settlement (volcano or gold) sends the game back to setup
+                // for that settlement's road, so setup can come round again after the first call to `run_setup`.
+                Phase::Setup => run_setup(g, rng),
                 Phase::Roll => {
                     // cheat: top up the current hand from the bank
                     for _ in 0..3 {
@@ -4367,10 +4370,14 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"bridges":true}"#).unwrap();
         assert!(s.bridges && s.points_to_win == 15);
         let (g, _, _, e) = bridge_game(true);
+        // The browser works out the land edges itself and is sent the bridge sites as pairs of corners, in
+        // edge order (see board_wire.rs), so the one at edge `e` is entry `e - land_edges`.
         let v = serde_json::to_value(&g.board).unwrap();
-        assert_eq!(v["edges"][e]["bridge"], true);
-        let land = g.board.edges.iter().position(|e| !e.bridge).unwrap();
-        assert!(v["edges"][land].get("bridge").is_none(), "land edges are sent as before");
+        let land = g.board.edges.iter().filter(|e| !e.bridge).count();
+        assert!(e >= land, "bridge sites come after the land edges");
+        assert_eq!(v["bridges"][e - land], serde_json::json!([g.board.edges[e].a, g.board.edges[e].b]));
+        assert_eq!(v["bridges"].as_array().unwrap().len(), g.board.edges.len() - land);
+        assert!(v.get("edges").is_none() && v.get("vertices").is_none(), "corners and sides are not sent");
     }
 
     fn random_settings(rng: &mut impl Rng) -> Settings {
@@ -5072,7 +5079,7 @@ mod tests {
         assert_eq!(v["phase"], "main");
         assert!(v["volcano"].is_null());
         assert_eq!(v["lava"]["hex"], 0);
-        assert_eq!(v["board"]["hexes"][0]["terrain"], "volcano");
+        assert_eq!(v["board"]["hexes"][0][2], "volcano");
     }
 
     #[test]
@@ -5218,7 +5225,9 @@ mod tests {
     fn a_roll_of_another_number_or_gold_with_nobody_on_it_does_nothing() {
         let mut g = gold_game(2);
         build_on_gold(&mut g, 0, P0, false);
-        g.resolve_roll(9);
+        // (the rim hexes are numbered at random from 3, 4, 5, 9, 10 and 11, so one beside the building could pay
+        // out on a 9; no hex carries a 6)
+        g.resolve_roll(6);
         assert_eq!(g.phase, Phase::Main);
         assert!(g.volcano_picks.is_empty() && g.players[P0].hand.total() == 0);
         let mut g = gold_game(2);

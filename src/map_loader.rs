@@ -190,6 +190,7 @@ pub fn load_dir(dir: &Path, maps: &SharedMaps) -> FolderReport {
 mod tests {
     use super::*;
     use crate::builtin::{archipelago, flower};
+    use crate::builtin::{builtin, BUILTIN_MAPS};
     use crate::maps::{infos, shared_with_builtins, MAX_UPLOADS};
     use std::fs;
     use std::path::PathBuf;
@@ -220,6 +221,13 @@ mod tests {
         (id.to_string(), name.to_string())
     }
 
+    /// The built-in maps' ids and names in lobby order, then `after`.
+    fn builtins_then(after: &[(&str, &str)]) -> Vec<(String, String)> {
+        let mut listed: Vec<(String, String)> = BUILTIN_MAPS.iter().map(|&(id, _)| pair(id, &builtin(id).expect("built in").name)).collect();
+        listed.extend(after.iter().map(|&(id, name)| pair(id, name)));
+        listed
+    }
+
     #[test]
     fn good_maps_are_loaded_and_bad_ones_are_skipped_with_their_issues() {
         let dir = scratch("mixed");
@@ -240,7 +248,7 @@ mod tests {
         let report = load_dir(&dir, &maps);
 
         assert_eq!(report.loaded, 1);
-        assert_eq!(ids_and_names(&maps), vec![pair("standard", "Standard"), pair("earth", "Earth"), pair("usa", "USA"), pair("good", "Good")]);
+        assert_eq!(ids_and_names(&maps), builtins_then(&[("good", "Good")]));
         let skipped: Vec<&str> = report.skipped.iter().map(|(f, _)| f.as_str()).collect();
         assert_eq!(skipped, vec!["binary.json", "broken.json", "dir.json", "empty.json", "huge.json", "nohexes.json", "typo.json"]);
         let why = |file: &str| report.skipped.iter().find(|(f, _)| f == file).unwrap().1.join(" / ");
@@ -294,7 +302,7 @@ mod tests {
         assert_eq!(report.loaded, 0);
         assert!(report.folder_problem.is_some());
         assert!(report.summary(&dir).starts_with("Loaded 0 maps (can't read the maps folder"), "{}", report.summary(&dir));
-        assert_eq!(ids_and_names(&maps), vec![pair("standard", "Standard"), pair("earth", "Earth"), pair("usa", "USA")]);
+        assert_eq!(ids_and_names(&maps), builtins_then(&[]));
     }
 
     #[test]
@@ -347,7 +355,7 @@ mod tests {
         load_dir(&dir, &second);
         assert_eq!(ids_and_names(&first), ids_and_names(&second));
         let ids: Vec<String> = ids_and_names(&first).into_iter().map(|(id, _)| id).collect();
-        assert_eq!(ids, vec!["standard", "earth", "usa", "alpha", "mid", "zeta"].into_iter().map(String::from).collect::<Vec<_>>());
+        assert_eq!(ids, crate::builtin::ids_then(&["alpha", "mid", "zeta"]).into_iter().map(String::from).collect::<Vec<_>>());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -377,7 +385,7 @@ mod tests {
         let maps = shared_with_builtins();
         let report = load_dir(&dir, &maps);
         assert_eq!(report.loaded, MAX_FOLDER_FILES);
-        assert_eq!(infos(&maps).len(), 3 + MAX_FOLDER_FILES);
+        assert_eq!(infos(&maps).len(), BUILTIN_MAPS.len() + MAX_FOLDER_FILES);
         assert_eq!(report.skipped.len(), 1);
         assert_eq!(report.skipped[0].0, "3 more files");
         let _ = fs::remove_dir_all(&dir);
@@ -404,7 +412,7 @@ mod tests {
         assert_eq!((added.id.as_str(), added.name.as_str(), added.name_changed, added.id_changed), ("flower-island", "Flower Island", false, false));
         let again = check_and_add(&maps, &json_of(&named("Flower Island")), MapSource::Upload, None).unwrap();
         assert_eq!((again.id.as_str(), again.name.as_str(), again.name_changed, again.id_changed), ("flower-island-2", "Flower Island (2)", true, true));
-        assert!(infos(&maps).iter().all(|i| i.builtin == (i.id == "standard" || i.id == "earth" || i.id == "usa")));
+        assert!(infos(&maps).iter().all(|i| i.builtin == BUILTIN_MAPS.iter().any(|&(id, _)| id == i.id)));
     }
 
     #[test]
@@ -419,12 +427,12 @@ mod tests {
         assert!(issues.len() >= 2, "{issues:?}");
         assert!(issues.iter().any(|i| i.contains("needs a name")));
         assert!(issues.iter().any(|i| i.contains("player range")));
-        assert_eq!(infos(&maps).len(), 3);
+        assert_eq!(infos(&maps).len(), BUILTIN_MAPS.len());
 
         for junk in ["", "null", "[]", "42", "\"text\"", "{", "{\"version\":1}", "\u{0}\u{0}", "{\"version\":99,\"name\":\"x\",\"hexes\":[]}"] {
             assert!(matches!(check_and_add(&maps, junk, MapSource::Upload, None), Err(AddError::Invalid(_))), "{junk:?}");
         }
-        assert_eq!(infos(&maps).len(), 3);
+        assert_eq!(infos(&maps).len(), BUILTIN_MAPS.len());
     }
 
     #[test]
@@ -447,7 +455,7 @@ mod tests {
             Err(AddError::Full(why)) => assert!(why.contains("10"), "{why}"),
             other => panic!("{other:?}"),
         }
-        assert_eq!(infos(&maps).len(), 3 + MAX_UPLOADS);
+        assert_eq!(infos(&maps).len(), BUILTIN_MAPS.len() + MAX_UPLOADS);
         // folder maps are not uploads
         assert!(check_and_add(&maps, &json_of(&named("From a file")), MapSource::Folder, Some("from-a-file")).is_ok());
     }

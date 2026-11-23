@@ -88,14 +88,14 @@ assert(clients.every((c) => c.last.map === 'earth'), 'everyone sees the host\'s 
 
 // ---- game settings -------------------------------------------------------------------------
 const STD = {
-  points_to_win: 15, discard_limit: 7, friendly_robber: false, max_roads: 15, max_cities: 4, max_settlements: 5,
+  points_to_win: 15, discard_limit: 7, friendly_robber: false, bridges: false, max_roads: 15, max_cities: 4, max_settlements: 5,
   dev_cards: 25, resource_max: 19, settlement_points: 1, city_points: 2, longest_road_points: 2,
   largest_army_points: 2, vp_card_points: 1, longest_road_min: 5, largest_army_min: 3,
   starting_settlements: 2, bank_ratio: 4,
 };
 assert(JSON.stringify(clients[0].last.settings) === JSON.stringify(STD), 'lobby defaults to the standard rules (15 points to win)');
 const CUSTOM = {
-  points_to_win: 12, discard_limit: 9, friendly_robber: true, max_roads: 12, max_cities: 3, max_settlements: 6,
+  points_to_win: 12, discard_limit: 9, friendly_robber: true, bridges: false, max_roads: 12, max_cities: 3, max_settlements: 6,
   dev_cards: 20, resource_max: 15, settlement_points: 1, city_points: 3, longest_road_points: 2,
   largest_army_points: 3, vp_card_points: 2, longest_road_min: 4, largest_army_min: 2,
   starting_settlements: 3, bank_ratio: 3,
@@ -125,13 +125,18 @@ assert(first.log.some((e) => e.type === 'turn_order' && e.order.join() === first
 {
   const b = first.board;
   assert(b.map === 'earth' && !('kind' in b) && b.hexes.length === 81 && b.ports.length === 27, 'the game is played on the Earth map');
+  // The board comes in its short form: each hex is [q, r, terrain, number], and the corners and sides are left to the browser.
+  assert(!('vertices' in b) && !('edges' in b), 'the board carries no corners or sides: ' + Object.keys(b).join());
+  assert(JSON.stringify(b).length < 3000, 'the Earth board is small: ' + JSON.stringify(b).length + ' bytes');
+  assert(Array.isArray(b.bridges) && b.bridges.length > 0, 'Earth lists its bridge sites');
+  const hexes = b.hexes.map(([q, r, terrain, number]) => ({ q, r, terrain, number }));
   assert(b.style && b.style.sea_grid === true, 'Earth tells the browser to draw the sea grid: ' + JSON.stringify(b.style));
   assert(first.log.some((e) => e.type === 'map_chosen' && e.map === 'earth' && e.name === 'Earth'), 'the map is logged, by id and by name');
-  const at = (q, r) => b.hexes.find((h) => h.q === q && h.r === r);
+  const at = (q, r) => hexes.find((h) => h.q === q && h.r === r);
   assert([[6, 5], [7, 5], [8, 5]].every(([q, r]) => at(q, r).terrain === 'desert'), 'the Sahara is desert');
-  const deserts = b.hexes.filter((h) => h.terrain === 'desert');
+  const deserts = hexes.filter((h) => h.terrain === 'desert');
   assert(deserts.length === 5 && deserts.every((h) => h.number === null), 'five deserts, none with a number');
-  assert(b.hexes[first.robber].terrain === 'desert', 'the robber starts on a desert');
+  assert(hexes[first.robber].terrain === 'desert', 'the robber starts on a desert');
   assert(b.ports.filter((p) => p.resource === null).length === 12, 'twelve 3:1 harbours');
 }
 clients[0].send({ type: 'set_map', map: 'standard' }); await sleep(100);

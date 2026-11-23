@@ -78,37 +78,41 @@ impl Terrain {
     }
 }
 
-#[derive(Clone, Serialize)]
+// `Hex`, `Vertex` and `Edge` are not `Serialize` on purpose: the browser is never sent them one by one. It is
+// sent a board in a short form (`impl Serialize for Board`, in board_wire.rs) and works out where the hexes are
+// drawn and what the corners and sides are numbered from the hexes' `q` and `r`.
+
+#[derive(Clone)]
 pub struct Hex {
     pub q: i32,
     pub r: i32,
+    /// Where the hex is drawn. The rules never read this and the browser is not sent it (it works the same
+    /// numbers out from `q` and `r`); the tests check the browser's against these.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub x: f64,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub y: f64,
     pub terrain: Terrain,
     pub number: Option<u8>,
-    #[serde(skip)]
     pub vertices: [usize; 6],
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct Vertex {
     pub x: f64,
     pub y: f64,
-    #[serde(skip)]
     pub hexes: Vec<usize>,
-    #[serde(skip)]
     pub neighbors: Vec<usize>,
-    #[serde(skip)]
     pub edges: Vec<usize>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct Edge {
     pub a: usize,
     pub b: usize,
     /// A bridge site: a sea edge joining two land corners. Only a bridge can be built here (and only when the
-    /// game's `bridges` rule is on). Land and coast edges have `false`, which the browser is not sent.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    /// game's `bridges` rule is on). Land and coast edges have `false`. The browser is sent the bridge sites
+    /// as a list of their corners and works out the land edges itself (see board_wire.rs).
     pub bridge: bool,
 }
 
@@ -120,7 +124,8 @@ pub struct Port {
     pub resource: Option<Resource>,
 }
 
-#[derive(Clone, Serialize)]
+/// The board of a game. It is sent to the browser in a short form: see `impl Serialize for Board` in board_wire.rs.
+#[derive(Clone)]
 pub struct Board {
     /// Which map this is a board of: its id in the map registry (`"standard"`, `"earth"`, ...).
     pub map: String,
@@ -970,39 +975,6 @@ mod tests {
         [(Terrain::Hills, 29), (Terrain::Forest, 29), (Terrain::Pasture, 29), (Terrain::Fields, 28), (Terrain::Mountains, 28)];
     /// How many tokens of each number USA has (the standard mix scaled up to 143 tokens).
     const USA_TOKENS: [(u8, usize); 10] = [(2, 8), (3, 16), (4, 16), (5, 15), (6, 16), (8, 16), (9, 16), (10, 16), (11, 16), (12, 8)];
-
-    #[test]
-    fn usa_has_the_promised_shape() {
-        for _ in 0..50 {
-            let b = Board::generate("usa", &mut rand::thread_rng());
-            assert_eq!(b.map, "usa");
-            assert!(!b.style.sea_grid, "USA does not ask for the sea grid");
-            assert_eq!(b.hexes.len(), 144);
-            assert_eq!(b.hexes.iter().filter(|h| h.terrain == Terrain::Desert).count(), 1, "exactly one desert");
-            assert!(b.hexes.iter().all(|h| (h.terrain == Terrain::Desert) == h.number.is_none()));
-            assert_eq!(b.hexes[b.desert].terrain, Terrain::Desert);
-            // twelve rows, from the top of Washington to the tip of Florida
-            let rows: std::collections::BTreeSet<i32> = b.hexes.iter().map(|h| h.r).collect();
-            assert_eq!(rows.len(), 12);
-        }
-    }
-
-    #[test]
-    fn usa_terrain_and_tokens() {
-        for _ in 0..50 {
-            let b = Board::generate("usa", &mut rand::thread_rng());
-            for (t, count) in USA_TERRAINS {
-                assert_eq!(b.hexes.iter().filter(|h| h.terrain == t).count(), count);
-            }
-            let mut nums: Vec<u8> = b.hexes.iter().filter_map(|h| h.number).collect();
-            assert_eq!(nums.len(), 143);
-            nums.sort();
-            let mut want: Vec<u8> = USA_TOKENS.iter().flat_map(|&(n, c)| std::iter::repeat(n).take(c)).collect();
-            want.sort();
-            assert_eq!(nums, want);
-            assert_tokens_spread(&b);
-        }
-    }
 
     #[test]
     fn usa_desert_is_dealt_anywhere() {

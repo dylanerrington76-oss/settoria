@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { expandBoard } from './boardGeometry';
 import { applyPatch } from './patch';
 import type { GameView, LobbyPlayer, MapInfo, ServerMsg, Settings, TimerMode } from './types';
 
@@ -11,8 +12,8 @@ export type Screen =
  * Websocket connection to the Rust server. The reconnect token lives in
  * sessionStorage (per browser tab), so a page reload rejoins the same seat.
  *
- * The server sends the whole game view (board included) once, and after that only what changed (`patch`), so the
- * view the page sees is kept up to date here. If a patch doesn't fit, or one is missed, the whole view is asked for again.
+ * The server sends the whole game view (board included, in its short form) once, and after that only what changed
+ * (`patch`), so the view the page sees is kept up to date here. If a patch doesn't fit, or one is missed, the whole view is asked for again.
  */
 export function useGame() {
   const [screen, setScreen] = useState<Screen>({ kind: 'idle' });
@@ -57,12 +58,23 @@ export function useGame() {
             resyncing = false;
             setScreen({ kind: 'lobby', you: m.you, players: m.players, timer: m.timer, settings: m.settings, map: m.map, maps: m.maps });
             break;
-          case 'game':
-            // (A server that doesn't send patches sends no `seq` and a whole view every time.)
-            held = { view: m.view, seq: m.seq ?? -1 };
+          case 'game': {
+            // The board comes in its short form (see boardGeometry.ts); it is worked out in full here, once, and
+            // patches then carry it along untouched. (A server that doesn't send patches sends no `seq` and a
+            // whole view every time.)
+            let view: GameView;
+            try {
+              view = { ...m.view, board: expandBoard(m.view.board) };
+            } catch (err) {
+              console.error('The board could not be read:', err);
+              setError('The server sent a board this page cannot read. Reload the page, and if it keeps happening the page and the server are out of step.');
+              break;
+            }
+            held = { view, seq: m.seq ?? -1 };
             resyncing = false;
-            setScreen({ kind: 'game', view: m.view });
+            setScreen({ kind: 'game', view });
             break;
+          }
           case 'patch':
             if (resyncing) break;
             if (!held) {
