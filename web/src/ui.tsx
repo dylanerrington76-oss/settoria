@@ -37,6 +37,7 @@ import {
   RES_IDX,
   RES_NAMES,
   Settings,
+  SPEED_ROLL_SECS,
   TIMER_MODES,
   total,
   Trade,
@@ -442,7 +443,25 @@ export function RulesDialog({ settings, volcano, gold, onClose }: { settings: Se
         <li>
           Trade with the bank at {settings.bank_ratio}:1, or better with a harbour.
         </li>
-        <li>The first player to reach {settings.points_to_win} points on their own turn wins.</li>
+        {settings.speed ? (
+          <>
+            <li>
+              Speed mode: there are no turns. The dice roll by themselves every {SPEED_ROLL_SECS} seconds and everyone can build and
+              trade at any time. If two players build on the same spot at once, the first request the server gets wins.
+            </li>
+            <li>
+              Each 7 is placed by the next player in line (a Knight by whoever plays it). While anyone discards or the robber is being
+              placed, nobody can build or trade and the roll countdown waits.
+            </li>
+            <li>
+              You can play one development card between two rolls, and a card you buy can be played after the next roll. Road Building
+              gives you two free roads to place whenever you like.
+            </li>
+            <li>The first player to reach {settings.points_to_win} points wins, at any moment.</li>
+          </>
+        ) : (
+          <li>The first player to reach {settings.points_to_win} points on their own turn wins.</li>
+        )}
       </ul>
       <div className="modal-actions">
         <button className="primary" onClick={onClose}>
@@ -458,14 +477,29 @@ export function InfoDialog({ v, onClose, onCosts }: { v: GameView; onClose: () =
   const timerMode = TIMER_MODES.find((m) => m.id === v.timer_mode);
   return (
     <Modal title="Game info" onClose={onClose}>
-      <div className="cost-row">
-        <span>Turn order</span>
-        <b>{v.order.map((id) => v.players[id].name).join(' → ')}</b>
-      </div>
-      <div className="cost-row">
-        <span>Turn timer</span>
-        <b>{timerMode ? `${timerMode.label} (${timerMode.secs}s)` : v.timer_mode}</b>
-      </div>
+      {v.settings.speed ? (
+        <>
+          <div className="cost-row">
+            <span>Game mode</span>
+            <b>Speed: the dice roll every {SPEED_ROLL_SECS}s</b>
+          </div>
+          <div className="cost-row">
+            <span>Robber order</span>
+            <b>{v.order.map((id) => v.players[id].name).join(' → ')}</b>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="cost-row">
+            <span>Turn order</span>
+            <b>{v.order.map((id) => v.players[id].name).join(' → ')}</b>
+          </div>
+          <div className="cost-row">
+            <span>Turn timer</span>
+            <b>{timerMode ? `${timerMode.label} (${timerMode.secs}s)` : v.timer_mode}</b>
+          </div>
+        </>
+      )}
       <div className="cost-row">
         <span>Longest Road</span>
         <b>{holder(v.longest_road_holder)}</b>
@@ -586,7 +620,7 @@ export function Hand({
           <button
             key={k}
             className={'stack dev' + (playable ? ' playable' : '') + (ready ? '' : ' fresh')}
-            title={`${DEV_NAMES[k]}: ${devHelp(k, v.settings.vp_card_points)}${ready ? '' : ' (playable next turn)'}`}
+            title={`${DEV_NAMES[k]}: ${devHelp(k, v.settings.vp_card_points)}${ready ? '' : v.settings.speed ? ' (playable after the next roll)' : ' (playable next turn)'}`}
             disabled={!playable}
             onClick={() => onPlayDev(k)}
           >
@@ -654,8 +688,9 @@ export function WinBar({ v, id, className }: { v: GameView; id: number; classNam
  * The small marker on the row of the player whose turn it is: a yellow pill with a dot and, for the player on the
  * clock, the live countdown. It keeps its own timer so the 4 Hz repaint only touches this pill.
  */
-function TurnPill({ v, id }: { v: GameView; id: number }) {
-  const timer = v.timer && v.timer.player === id ? v.timer : null;
+function TurnPill({ v, id, robberNext }: { v: GameView; id: number; robberNext?: boolean }) {
+  // In Speed mode the marked player isn't on a turn clock: they are the one who places the robber on the next 7.
+  const timer = !robberNext && v.timer && v.timer.player === id ? v.timer : null;
   const [, tick] = useState(0);
   const anchor = useMemo(() => ({ at: performance.now(), ms: timer?.remaining_ms ?? 0 }), [timer]);
   useEffect(() => {
@@ -664,9 +699,12 @@ function TurnPill({ v, id }: { v: GameView; id: number }) {
     return () => window.clearInterval(t);
   }, [timer]);
   const secs = timer ? Math.ceil(Math.max(0, anchor.ms - (performance.now() - anchor.at)) / 1000) : null;
-  const text = secs === null ? 'Turn' : `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+  const text = robberNext ? 'Robber next' : secs === null ? 'Turn' : `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
   return (
-    <span className={'turn-pill' + (secs !== null && secs < 10 ? ' urgent' : '')} title={secs === null ? 'Their turn' : 'Time left on this turn'}>
+    <span
+      className={'turn-pill' + (secs !== null && secs < 10 ? ' urgent' : '')}
+      title={robberNext ? 'Places the robber on the next 7' : secs === null ? 'Their turn' : 'Time left on this turn'}
+    >
       <i aria-hidden="true" />
       {text}
     </span>
@@ -694,7 +732,7 @@ export function PlayerRow({ v, id }: { v: GameView; id: number }) {
             <span className="prow-name" title={p.name}>
               {p.name}
             </span>
-            {turn && <TurnPill v={v} id={id} />}
+            {turn && <TurnPill v={v} id={id} robberNext={v.settings.speed && v.phase === 'main'} />}
           </div>
           <WinBar v={v} id={id} className="prow-win" />
         </div>
@@ -781,6 +819,8 @@ const TIMEOUT_TEXT: Record<ClockKind, string> = {
   steal: ' ran out of time; a victim was chosen at random',
   volcano: ' ran out of time; free resources were picked for them at random',
   turn: ' ran out of time; their turn was ended',
+  // The automatic roll of Speed mode is not logged as anybody running out of time.
+  auto_roll: 'The dice were rolled',
 };
 
 /** The player a log entry is about, if it has one: they get the leading icon and drive the turn separators. */
@@ -819,6 +859,17 @@ function describe(e: LogEvent, v: GameView): ReactNode {
       return (
         <>
           {' rolled '}
+          {e.dice.map((n, i) => (
+            <span key={i} className="mini-die">
+              <DieFace n={n} r={13} />
+            </span>
+          ))}
+        </>
+      );
+    case 'dice_rolled':
+      return (
+        <>
+          {'The dice rolled '}
           {e.dice.map((n, i) => (
             <span key={i} className="mini-die">
               <DieFace n={n} r={13} />
@@ -993,7 +1044,7 @@ export function Log({ lines, v, dark = false }: { lines: LogEvent[]; v: GameView
   }, [lines.length]);
   // A rule is drawn between turns: before every roll, and (before the first roll,
   // i.e. during setup) whenever the acting player changes.
-  const firstRoll = lines.findIndex((e) => e.type === 'rolled');
+  const firstRoll = lines.findIndex((e) => e.type === 'rolled' || e.type === 'dice_rolled');
   let last: number | null = null;
   return (
     <DarkLog.Provider value={dark}>
@@ -1001,7 +1052,7 @@ export function Log({ lines, v, dark = false }: { lines: LogEvent[]; v: GameView
         {lines.map((e, i) => {
           const a = actorOf(e);
           const inSetup = firstRoll === -1 || i < firstRoll;
-          const split = i > 0 && (e.type === 'rolled' || (inSetup && a !== null && last !== null && a !== last));
+          const split = i > 0 && (e.type === 'rolled' || e.type === 'dice_rolled' || (inSetup && a !== null && last !== null && a !== last));
           if (a !== null) last = a;
           return (
             <Fragment key={i}>

@@ -33,6 +33,8 @@ pub enum LogEvent {
 
     // ---- dice, production, the robber ------------------------------------------
     Rolled { player: PlayerId, dice: (u8, u8) },
+    /// Speed mode: the server rolled the dice, so nobody is the roller.
+    DiceRolled { dice: (u8, u8) },
     /// What `player` received from the bank for a roll.
     Collected { player: PlayerId, cards: Res },
     /// The bank could not cover `resource` and more than one player was owed it.
@@ -110,6 +112,7 @@ mod tests {
             wire(&LogEvent::Rolled { player: PlayerId::new(2), dice: (3, 4) }),
             json!({ "type": "rolled", "player": 2, "dice": [3, 4] })
         );
+        assert_eq!(wire(&LogEvent::DiceRolled { dice: (6, 1) }), json!({ "type": "dice_rolled", "dice": [6, 1] }));
         assert_eq!(
             wire(&LogEvent::Collected { player: PlayerId::new(0), cards: Res::new(1, 0, 2, 0, 0) }),
             json!({ "type": "collected", "player": 0, "cards": [1, 0, 2, 0, 0] })

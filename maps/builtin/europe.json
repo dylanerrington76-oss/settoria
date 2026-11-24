@@ -2,7 +2,7 @@
   "version": 1,
   "name": "Europe",
   "author": "Dylan Errington",
-  "players": { "min": 2, "max": 8 },
+  "players": { "min": 2, "max": 12 },
   "hexes": [
     { "q": -6, "r": 1 },
     { "q": -6, "r": 2 },

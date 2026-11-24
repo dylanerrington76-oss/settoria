@@ -894,12 +894,12 @@ mod tests {
         assert_eq!(ids(&lobby["maps"]), builtin::ids_then(&[]));
         let earth = &lobby["maps"][1];
         assert_eq!(earth["name"], "Earth");
-        assert_eq!((earth["hexes"].as_u64(), earth["players_min"].as_u64(), earth["players_max"].as_u64()), (Some(81), Some(2), Some(8)));
+        assert_eq!((earth["hexes"].as_u64(), earth["players_min"].as_u64(), earth["players_max"].as_u64()), (Some(81), Some(2), Some(12)));
         assert_eq!(earth["builtin"], true);
         assert!(earth.get("recommended_settings").is_none());
         let usa = &lobby["maps"][2];
         assert_eq!(usa["name"], "USA");
-        assert_eq!((usa["hexes"].as_u64(), usa["players_min"].as_u64(), usa["players_max"].as_u64()), (Some(140), Some(2), Some(8)));
+        assert_eq!((usa["hexes"].as_u64(), usa["players_min"].as_u64(), usa["players_max"].as_u64()), (Some(140), Some(2), Some(12)));
         assert_eq!(usa["builtin"], true);
     }
 
@@ -961,33 +961,33 @@ mod tests {
     }
 
     #[test]
-    fn eight_players_can_sit_and_a_ninth_is_turned_away() {
-        let (mut room, mut c) = table(&["Ada", "Bo", "Cy", "Di", "Ed", "Flo", "Gus", "Hal"]);
-        assert_eq!(room.seats.len(), 8);
+    fn twelve_players_can_sit_and_a_thirteenth_is_turned_away() {
+        let (mut room, mut c) = table(&["Ada", "Bo", "Cy", "Di", "Ed", "Flo", "Gus", "Hal", "Ivy", "Jo", "Kai", "Lu"]);
+        assert_eq!(room.seats.len(), 12);
         let colors: std::collections::HashSet<_> = room.seats.iter().map(|s| s.color).collect();
-        assert_eq!(colors.len(), 8, "everyone gets a color of their own");
+        assert_eq!(colors.len(), 12, "everyone gets a color of their own");
 
-        let mut ninth = Client::new();
-        ninth.say(&mut room, json!({ "type": "join", "name": "Late" }));
-        let errors = ninth.errors();
-        assert!(errors.len() == 1 && errors[0].contains("table is full") && errors[0].contains('8'), "{errors:?}");
-        assert_eq!(room.seats.len(), 8);
+        let mut late = Client::new();
+        late.say(&mut room, json!({ "type": "join", "name": "Late" }));
+        let errors = late.errors();
+        assert!(errors.len() == 1 && errors[0].contains("table is full") && errors[0].contains("12"), "{errors:?}");
+        assert_eq!(room.seats.len(), 12);
 
         // Standard is a 2 to 4 player board, so the host has to choose a bigger map first
         c[0].say(&mut room, json!({ "type": "start" }));
         let errors = c[0].errors();
-        assert!(errors.len() == 1 && errors[0].contains("for 2 to 4 players") && errors[0].contains("8 are seated"), "{errors:?}");
+        assert!(errors.len() == 1 && errors[0].contains("for 2 to 4 players") && errors[0].contains("12 are seated"), "{errors:?}");
         assert!(room.game.is_none(), "still in the lobby");
 
         c[0].say(&mut room, json!({ "type": "set_map", "map": "earth" }));
         c[0].heard();
         c[0].say(&mut room, json!({ "type": "start" }));
-        assert!(room.game.is_some(), "started with 8 on Earth");
+        assert!(room.game.is_some(), "started with 12 on Earth");
         let view = c[0].latest("game").expect("a game message")["view"].clone();
-        assert_eq!(view["players"].as_array().unwrap().len(), 8);
-        assert_eq!(view["order"].as_array().unwrap().len(), 8);
-        assert_eq!(view["bank"], json!([30, 30, 30, 30, 30]), "the bank grows with the table");
-        assert_eq!(view["deck_left"], 44);
+        assert_eq!(view["players"].as_array().unwrap().len(), 12);
+        assert_eq!(view["order"].as_array().unwrap().len(), 12);
+        assert_eq!(view["bank"], json!([42, 42, 42, 42, 42]), "the bank grows with the table");
+        assert_eq!(view["deck_left"], 60);
     }
 
     #[test]
@@ -1682,67 +1682,69 @@ mod tests {
     }
 
     #[test]
-    fn bots_count_toward_the_eight_seats_and_come_and_go() {
+    fn bots_count_toward_the_twelve_seats_and_come_and_go() {
         let (mut room, mut c) = table(&["Ada", "Bo", "Cy"]);
-        for _ in 0..5 {
+        for _ in 0..9 {
             c[0].say(&mut room, json!({ "type": "add_bot" }));
         }
         assert!(c[0].errors().is_empty());
-        assert_eq!(room.seats.len(), 8);
+        assert_eq!(room.seats.len(), 12);
         assert!(from_the_list_once(&bot_names(&room)));
         let colors: std::collections::HashSet<_> = room.seats.iter().map(|s| s.color).collect();
-        assert_eq!(colors.len(), 8, "everyone, bots included, has a color of their own");
+        assert_eq!(colors.len(), 12, "everyone, bots included, has a color of their own");
 
         c[0].say(&mut room, json!({ "type": "add_bot" }));
         let errors = c[0].errors();
-        assert!(errors.len() == 1 && errors[0].contains("full") && errors[0].contains('8'), "{errors:?}");
+        assert!(errors.len() == 1 && errors[0].contains("full") && errors[0].contains("12"), "{errors:?}");
         let mut late = Client::new();
         late.say(&mut room, json!({ "type": "join", "name": "Late" }));
         let errors = late.errors();
         assert!(errors.len() == 1 && errors[0].contains("table is full"), "{errors:?}");
-        assert_eq!(room.seats.len(), 8);
+        assert_eq!(room.seats.len(), 12);
 
         // Take a bot away from the middle of the table: the seats after it move up, and another bot can sit down.
         c[0].say(&mut room, json!({ "type": "remove_bot", "seat": 5 }));
-        assert_eq!(room.seats.len(), 7);
-        assert_eq!(bot_names(&room).len(), 4);
+        assert_eq!(room.seats.len(), 11);
+        assert_eq!(bot_names(&room).len(), 8);
         assert!(from_the_list_once(&bot_names(&room)));
         c[0].say(&mut room, json!({ "type": "add_bot" }));
-        assert_eq!(room.seats.len(), 8);
+        assert_eq!(room.seats.len(), 12);
         assert!(from_the_list_once(&bot_names(&room)));
-        assert_eq!(c[2].latest("lobby").unwrap()["players"].as_array().unwrap().len(), 8);
+        assert_eq!(c[2].latest("lobby").unwrap()["players"].as_array().unwrap().len(), 12);
     }
 
     #[test]
     fn a_table_of_bots_uses_every_name_once_and_a_name_that_is_freed_comes_back() {
         let (mut room, mut c) = table(&["Ada"]);
-        for _ in 0..7 {
+        for _ in 0..11 {
             c[0].say(&mut room, json!({ "type": "add_bot" }));
         }
         assert!(c[0].errors().is_empty());
-        assert_eq!(room.seats.len(), 8);
-        let mut drawn = bot_names(&room);
-        drawn.sort();
-        let mut all = bot::NAMES.to_vec();
-        all.sort();
-        assert_eq!(drawn, all, "seven bots, seven names");
+        assert_eq!(room.seats.len(), 12);
+        // Eleven bots use eleven of the twelve names, each once; one name is never drawn.
+        let drawn = bot_names(&room);
+        assert_eq!(drawn.len(), 11);
+        assert!(from_the_list_once(&drawn), "{drawn:?}");
+        let spare: Vec<&str> = bot::NAMES.iter().copied().filter(|n| !drawn.contains(n)).collect();
+        assert_eq!(spare.len(), 1);
 
-        // Take one away: its name is free again, and it is the only one that is, so the next bot has it.
+        // Take one away: its name is free again. Only it and the spare name are free, so the next bot has one of them.
         let gone = room.seats[PlayerId::new(3)].name.clone();
         c[0].say(&mut room, json!({ "type": "remove_bot", "seat": 3 }));
         assert!(!seat_names(&room).contains(&gone.as_str()));
         c[0].say(&mut room, json!({ "type": "add_bot" }));
-        assert_eq!(room.seats[PlayerId::new(7)].name, gone);
+        let next = room.seats[PlayerId::new(11)].name.as_str();
+        assert!(next == gone || next == spare[0], "{next}");
     }
 
     #[test]
     fn a_bot_never_takes_a_name_a_person_has() {
         let (mut room, mut c) = table(&["Ada", "hal 9000"]);
-        for _ in 0..6 {
+        for _ in 0..10 {
             c[0].say(&mut room, json!({ "type": "add_bot" }));
         }
         assert!(c[0].errors().is_empty());
-        assert_eq!(room.seats.len(), 8);
+        assert_eq!(room.seats.len(), 12);
         let bots = bot_names(&room);
         assert!(from_the_list_once(&bots), "{bots:?}");
         assert!(bots.iter().all(|n| !n.eq_ignore_ascii_case("hal 9000")), "{bots:?}");

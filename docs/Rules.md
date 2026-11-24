@@ -14,14 +14,15 @@ change in the lobby.
 - [Trading](#trading)
 - [Development cards](#development-cards)
 - [Awards and winning](#awards-and-winning)
-- [Five to eight players](#five-to-eight-players)
+- [Five to twelve players](#five-to-twelve-players)
 - [Game settings](#game-settings)
 - [Timers](#timers)
+- [Speed mode](#speed-mode)
 - [Statistics shown to players](#statistics-shown-to-players)
 
 ## The game at a glance
 
-Two to eight players take turns on a board of hexes (see [Maps](Maps.md)). Each hex produces a resource when its number
+Two to twelve players take turns on a board of hexes (see [Maps](Maps.md)). Each hex produces a resource when its number
 token is rolled. Players spend resources to build roads, settlements and cities, which score points, and race to be the
 first to reach the **points target** (15 by default) on their own turn.
 
@@ -200,9 +201,9 @@ Building, Year of Plenty and Monopoly. A different deck size (a [setting](#game-
 
 Point values, the minimum lengths and the points target are all [settings](#game-settings).
 
-## Five to eight players
+## Five to twelve players
 
-The same rules apply on a map that allows them (Earth and USA, and any custom map that says so). So that the shared
+The same rules apply on a map that allows them (Earth, USA and Europe, and any custom map that says so). So that the shared
 bank and the development deck don't run dry, the host's choices are scaled to the table, **but only where they were
 left at the standard size**:
 
@@ -211,9 +212,11 @@ left at the standard size**:
 | 2 to 4 | 19 | 25 |
 | 5 or 6 | 24 | 34 |
 | 7 or 8 | 30 | 44 |
+| 9 or 10 | 36 | 54 |
+| 11 or 12 | 42 | 60 |
 
 A bank or deck the host changed is left as chosen. The number of starting settlements the table can have is limited
-by what fits: players times starting settlements may not be more than 40.
+by what fits: players times starting settlements may not be more than 60 (twelve players with the most starting settlements, 5, each).
 
 ## Game settings
 
@@ -244,7 +247,7 @@ opens a game with a line for everything that is not the standard value.
 | Bank trade ratio (`bank_ratio`) | 4 | 1 to 8 | Cards given to the bank for one card; harbours can only improve on it. |
 
 Combinations that can't be played are refused too: starting settlements may not exceed max settlements or max roads,
-and players times starting settlements may not be more than 40.
+and players times starting settlements may not be more than 60.
 
 ## Timers
 
@@ -273,6 +276,38 @@ with 22 s left on Very Fast gives 30 s, not 32 s): **+10 s** for each road, brid
 development card bought, each bank trade, and each player trade that is completed (the proposer confirming with
 someone who accepted). Roads from a Road Building card count as roads. Sending, accepting or declining an offer earns
 nothing by itself.
+
+## Speed mode
+
+**Settoria Speed** is a game mode the host switches on in the lobby (the `speed` field of the [settings](#game-settings),
+shown as *Game mode*). The rules above all apply, except for these:
+
+- **No turns.** Setup is still turn based (same order, same clocks). When it ends, the table is open: every player can
+  build, trade with the bank, trade with each other and play development cards at any moment. The turn timer, the
+  roll window and the time bonuses do not exist, and `roll` and `end_turn` are refused.
+- **The server rolls.** The dice are rolled automatically every **20 seconds**. A countdown shows the time to the next
+  roll all the time and starts again at 20 after every roll.
+- **Simultaneous requests.** The server handles one request at a time. If two players who can both afford a
+  settlement build on the same spot "at once", the first request it processes succeeds and the second is refused like
+  any other illegal move (and costs nothing).
+- **The robber moves down the line.** Each 7 is placed by the next player in turn order: the first 7 by the first
+  player, the second by the second, and so on, wrapping round. A Knight is placed by whoever plays it and does not
+  move the rotation. Everyone else can see who is next.
+- **A 7 stops the table.** While anyone is discarding, and while the robber is placed and a victim chosen, nobody
+  else can build or trade, open offers are withdrawn and the roll countdown is frozen. It is not running during any
+  of this: it starts again at a full 20 seconds when the last step is done. (A Knight freezes it too, and the
+  countdown carries on with the time that was left.) The 7's own clocks are as in [Timers](#timers).
+- **Volcano and gold picks** after a roll stop the table in the same way (15 seconds each, starting with the player
+  next in the robber rotation), and the countdown restarts afterwards.
+- **A round is the time between two rolls.** A player may play one development card per round, a card bought is
+  playable from the next roll, and giving away 2 or more of a resource in trades locks Monopoly on it only until the
+  next roll.
+- **Road Building** does not stop the table: it gives the player two free roads (fewer with fewer pieces left) to
+  place whenever they like.
+- **Offers.** Every player may have up to 4 offers open at once. A player can only withdraw their own, and playing a
+  development card withdraws only the player's own offers. Offers stay open across rolls (but not across a 7).
+- **Winning.** Anyone with the points target wins the moment they have it, not only on their own turn (the player
+  whose action it was first, if several have it).
 
 ## Statistics shown to players
 

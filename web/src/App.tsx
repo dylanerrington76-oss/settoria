@@ -5,7 +5,7 @@ import Changelog from './Changelog';
 import Footer from './Footer';
 import MapEditor from './MapEditor';
 import { MobileTable, useIsPhone } from './Mobile';
-import { MAX_FILES_AT_ONCE, MAX_MAP_BYTES, UploadResult, uploadMapFile } from './mapUpload';
+import { MAX_FILES_AT_ONCE, UploadResult, uploadMapFile } from './mapUpload';
 import { formatPostgame, postgamePercent } from './postgame';
 import { GameSettingsPanel, settingsDifferences } from './GameSettings';
 import {
@@ -49,6 +49,7 @@ import {
   RES_IDX,
   RES_NAMES,
   Settings,
+  SPEED_ROLL_SECS,
   TIMER_MODES,
   TimerMode,
   TimerView,
@@ -258,9 +259,10 @@ export function Lobby({
     latest.current = { ...latest.current, ...patch };
     send({ type: 'set_settings', settings: latest.current });
   };
+  // The game mode is not one of the rules that "standard" and a map's suggestions are about: they leave it as it is.
   const reset = () => {
-    latest.current = DEFAULT_SETTINGS;
-    send({ type: 'set_settings', settings: DEFAULT_SETTINGS });
+    latest.current = { ...DEFAULT_SETTINGS, speed: latest.current.speed };
+    send({ type: 'set_settings', settings: latest.current });
   };
   // What the server says about the chosen map: the players it is meant for, and the rules it suggests.
   const info = maps.find((m) => m.id === map);
@@ -269,8 +271,8 @@ export function Lobby({
   // Suggested rules are only ever offered. Applying them is the host's choice, made the ordinary way.
   const applySuggested = () => {
     if (!suggested) return;
-    latest.current = suggested;
-    send({ type: 'set_settings', settings: suggested });
+    latest.current = { ...suggested, speed: latest.current.speed };
+    send({ type: 'set_settings', settings: latest.current });
   };
   const wrongCount = !!info && (players.length < info.players_min || players.length > info.players_max);
   const range = info ? playersText(info) : '';
@@ -311,7 +313,8 @@ export function Lobby({
         <div className="lobby-main">
           <h1>Waiting for players</h1>
           <ul className="seats">
-            {Array.from({ length: MAX_PLAYERS }, (_, i) => i).map((i) => {
+            {/* Seated players, then only the next open seat. Once the table is full there is no open seat to show. */}
+            {Array.from({ length: Math.min(players.length + 1, MAX_PLAYERS) }, (_, i) => i).map((i) => {
               const p = players[i];
               return (
                 <li key={i} className={p ? 'seat taken' : 'seat'}>
@@ -354,9 +357,6 @@ export function Lobby({
               Add bot
             </button>
           )}
-          <p className="muted">
-            Others join by opening <b>{location.host}</b> in their browser.
-          </p>
           <fieldset
             className={'timer-modes' + (dragging ? ' dropping' : '')}
             disabled={!host}
@@ -414,9 +414,6 @@ export function Lobby({
                 <button type="button" className="small" disabled={uploading} onClick={() => picker.current?.click()}>
                   {uploading ? 'Uploading…' : 'Upload map…'}
                 </button>
-                <span className="muted note">
-                  Choose a map .json file, or drop it here (up to {MAX_MAP_BYTES / 1024} KB). It stays until the server restarts.
-                </span>
               </div>
             )}
             {report.length > 0 && <UploadReport results={report} onClose={() => setReport([])} />}
@@ -437,24 +434,47 @@ export function Lobby({
             {!host && <p className="muted note">Only the host can change this.</p>}
           </fieldset>
           <fieldset className="timer-modes" disabled={!host}>
-            <legend>Turn timer</legend>
-            <div className="segments" role="radiogroup" aria-label="Turn timer">
-              {TIMER_MODES.map((m) => (
-                <label key={m.id} className={'segment' + (timer === m.id ? ' on' : '')}>
-                  <input
-                    type="radio"
-                    name="timer"
-                    value={m.id}
-                    checked={timer === m.id}
-                    onChange={() => send({ type: 'set_timer', mode: m.id })}
-                  />
-                  <span className="seg-name">{m.label}</span>
-                  <span className="seg-secs">{m.secs}s</span>
-                </label>
-              ))}
+            <legend>Game mode</legend>
+            <div className="segments" role="radiogroup" aria-label="Game mode">
+              <label className={'segment' + (!settings.speed ? ' on' : '')}>
+                <input type="radio" name="game-mode" value="classic" checked={!settings.speed} onChange={() => change({ speed: false })} />
+                <span className="seg-name">Classic</span>
+                <span className="seg-secs">turns</span>
+              </label>
+              <label className={'segment' + (settings.speed ? ' on' : '')}>
+                <input type="radio" name="game-mode" value="speed" checked={settings.speed} onChange={() => change({ speed: true })} />
+                <span className="seg-name">Speed</span>
+                <span className="seg-secs">roll every {SPEED_ROLL_SECS}s</span>
+              </label>
             </div>
+            {settings.speed && (
+              <p className="muted note">
+                No turns: the server rolls the dice every {SPEED_ROLL_SECS} seconds, and everyone can build and trade at any time.
+              </p>
+            )}
             {!host && <p className="muted note">Only the host can change this.</p>}
           </fieldset>
+          {!settings.speed && (
+            <fieldset className="timer-modes" disabled={!host}>
+              <legend>Turn timer</legend>
+              <div className="segments" role="radiogroup" aria-label="Turn timer">
+                {TIMER_MODES.map((m) => (
+                  <label key={m.id} className={'segment' + (timer === m.id ? ' on' : '')}>
+                    <input
+                      type="radio"
+                      name="timer"
+                      value={m.id}
+                      checked={timer === m.id}
+                      onChange={() => send({ type: 'set_timer', mode: m.id })}
+                    />
+                    <span className="seg-name">{m.label}</span>
+                    <span className="seg-secs">{m.secs}s</span>
+                  </label>
+                ))}
+              </div>
+              {!host && <p className="muted note">Only the host can change this.</p>}
+            </fieldset>
+          )}
         </div>
         <div className="lobby-rules">
           <GameSettingsPanel settings={settings} host={host} onChange={change} onReset={reset} />
@@ -500,6 +520,7 @@ function statusFor(v: GameView): string {
         ? 'Pick a Free Resource'
         : `${v.players[v.volcano?.player ?? v.current]?.name} is picking from the ${v.volcano && v.board.hexes[v.volcano.hex]?.terrain === 'gold' ? 'gold field' : 'volcano'}`;
     case 'main':
+      if (v.settings.speed) return mine ? 'Next robber: you' : `Next robber: ${cur}`;
       return mine ? 'Your Turn' : `${cur}'s Turn`;
     case 'road_building':
       return mine ? `Place ${v.road_building_left} Free Road${v.road_building_left === 1 ? '' : 's'}` : `${cur} is placing roads`;
@@ -535,9 +556,11 @@ function TurnClock({ timer, override }: { timer: TimerView | null; override?: nu
   const ms = override !== undefined ? override * 1000 : Math.max(0, anchor.ms - (performance.now() - anchor.at));
   const label = timer ? CLOCK_LABELS[timer.kind] : '';
   const secs = shownSecs(ms);
+  // The countdown to the next roll is only 20 seconds long, so it only turns red for the last 5.
+  const urgent = secs < (timer?.kind === 'auto_roll' ? 5 : 10);
   return (
     <div
-      className={'pill timer' + (secs < 10 ? ' urgent' : '') + (label ? ' labelled' : '')}
+      className={'pill timer' + (urgent ? ' urgent' : '') + (label ? ' labelled' : '')}
       title={timer ? CLOCK_TITLES[timer.kind] : 'Time left on this turn'}
       role="timer"
     >
@@ -586,8 +609,10 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
   const [statsOpen, setStatsOpen] = useState(true);
   const phone = useIsPhone();
 
+  const speed = v.settings.speed;
+  // In Speed mode nobody has a turn: whatever `current` is (setup, the robber), the table is open to everyone in `main`.
   const mine = v.current === v.you;
-  const main = mine && v.phase === 'main';
+  const main = v.phase === 'main' && (speed || mine);
   const me = v.players[v.you];
   const act = (a: object) => {
     send(a);
@@ -596,11 +621,11 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
   // What the board should highlight right now.
   const placing = v.phase === 'setup' || v.phase === 'road_building';
   const vertexTargets =
-    mine && (v.phase === 'setup' || (main && mode === 'settlement')) ? v.legal.settlements : main && mode === 'city' ? v.legal.cities : [];
-  const edgeTargets = !mine ? [] : placing || (main && mode === 'road') ? v.legal.roads : main && mode === 'bridge' ? v.legal.bridges : [];
+    (mine && v.phase === 'setup') || (main && mode === 'settlement') ? v.legal.settlements : main && mode === 'city' ? v.legal.cities : [];
+  const edgeTargets = (mine && placing) || (main && mode === 'road') ? v.legal.roads : main && mode === 'bridge' ? v.legal.bridges : [];
   const hexTargets = mine && v.phase === 'move_robber' ? v.legal.hexes : [];
 
-  const canDev = mine && (v.phase === 'roll' || v.phase === 'main') && !v.dev_played;
+  const canDev = (speed ? main : mine && (v.phase === 'roll' || v.phase === 'main')) && !v.dev_played;
   const discardNeed = v.phase === 'discard' ? v.discards.find((d) => d[0] === v.you) : undefined;
   useEffect(() => {
     if (!discardNeed) setPick([0, 0, 0, 0, 0]);
@@ -608,6 +633,8 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
 
   const pickMode = (m: Exclude<BuildMode, null>) => setMode((cur) => (cur === m ? null : m));
   const afford = (c: Res) => main && covers(v.hand, c);
+  // A Road Building card in Speed mode leaves free roads to place whenever you like.
+  const freeRoads = main && v.road_building_left > 0;
 
   const playDev = (k: number) => {
     if (k === 0) act({ type: 'play_knight' });
@@ -711,10 +738,10 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
       <ActBtn
         kind="road"
         label="Build road"
-        title={costText('Road', COST_ROAD)}
+        title={freeRoads ? `Road: free (${v.road_building_left} free road${v.road_building_left === 1 ? '' : 's'} left)` : costText('Road', COST_ROAD)}
         badge={me.roads_left}
         on={mode === 'road'}
-        disabled={!afford(COST_ROAD) || v.legal.roads.length === 0}
+        disabled={!(afford(COST_ROAD) || freeRoads) || v.legal.roads.length === 0}
         onClick={() => pickMode('road')}
       />
       {v.settings.bridges && (
@@ -746,16 +773,18 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
         disabled={!afford(COST_CITY) || v.legal.cities.length === 0}
         onClick={() => pickMode('city')}
       />
-      <ActBtn
-        kind="turn"
-        label="End turn"
-        title="End your turn"
-        disabled={!main}
-        onClick={() => {
-          setMode(null);
-          act({ type: 'end_turn' });
-        }}
-      />
+      {!speed && (
+        <ActBtn
+          kind="turn"
+          label="End turn"
+          title="End your turn"
+          disabled={!main}
+          onClick={() => {
+            setMode(null);
+            act({ type: 'end_turn' });
+          }}
+        />
+      )}
     </>
   );
 
@@ -791,7 +820,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
             (v.monopoly_locked.some(Boolean)
               ? ` You gave away ${MONOPOLY_LOCK_CARDS} or more of ${RES_IDX.filter((i) => v.monopoly_locked[i])
                   .map((i) => RES_NAMES[i])
-                  .join(' and ')} in trades this turn, so you can't pick ${v.monopoly_locked.filter(Boolean).length === 1 ? 'it' : 'them'} until your next turn.`
+                  .join(' and ')} in trades ${speed ? 'since the last roll' : 'this turn'}, so you can't pick ${v.monopoly_locked.filter(Boolean).length === 1 ? 'it' : 'them'} until your next ${speed ? 'roll' : 'turn'}.`
               : '')
           }
           count={1}
@@ -879,7 +908,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
           )}
         </main>
 
-        <div className={'bottom' + (v.settings.bridges ? ' with-bridge' : '')}>
+        <div className={'bottom' + (v.settings.bridges ? ' with-bridge' : '') + (speed ? ' speed' : '')}>
           <div className="status">
             {canRoll ? (
               <button className="pill" onClick={() => act({ type: 'roll' })} aria-live="polite">
@@ -900,7 +929,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
             <div className="handbar">{handEl}</div>
           </div>
 
-          <div className={'actions' + (v.settings.bridges ? ' with-bridge' : '')}>{actionEls}</div>
+          <div className={'actions' + (v.settings.bridges ? ' with-bridge' : '') + (speed ? ' speed' : '')}>{actionEls}</div>
         </div>
       </div>
 

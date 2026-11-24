@@ -32,6 +32,10 @@
 //! A bot is also held to `MAX_ACTIONS_PER_TURN` actions in a turn; after that it ends its turn, so a move that
 //! scores badly can never keep it busy for ever.
 //!
+//! In Speed mode (`Settings::speed`) there are no turns: while the table is open every bot builds, trades with the bank
+//! and plays cards whenever something scores above nothing, and just waits otherwise. The limit counts the actions
+//! between two rolls, and the driver gives the bots their moves in turn, so none of them is starved by another.
+//!
 //! `choose` is the whole brain: it looks at a `Game` and says what one seat would do. `Driver` is what the
 //! server runs: it gives the bots turns at a human pace, applies their moves, and counts their actions.
 
@@ -492,16 +496,18 @@ impl<'a> Mind<'a> {
     }
 
     fn can_play(&self, card: DevCard) -> bool {
-        !self.g.dev_played && self.g.players[self.me].dev[card] > 0
+        !self.g.dev_played_by(self.me) && self.g.players[self.me].dev[card] > 0
     }
 
     fn main_move<R: Rng>(&self, rng: &mut R) -> Option<Action> {
         let hand = self.hand();
         let builds = self.builds();
         let mut moves = vec![(0, Action::EndTurn)];
+        // (a Road Building card in Speed mode leaves free roads to place)
+        let free_roads = self.g.players[self.me].free_roads > 0;
 
         for b in &builds {
-            if hand.covers(&b.cost) {
+            if hand.covers(&b.cost) || (free_roads && matches!(b.kind, Kind::Road(_))) {
                 moves.push((b.value, b.action()));
             } else if b.value >= TRADE_MIN_TARGET {
                 // Not affordable yet: trade surplus for what is missing, if that gets it built this turn.
@@ -558,7 +564,7 @@ impl<'a> Mind<'a> {
             let others: i32 = PlayerId::range(g.n).filter(|&p| p != me).map(|p| g.players[p].hand.total() as i32).sum();
             let saving = self.target_cost();
             let lacking = |r: Resource| i32::from(saving[r]) - i32::from(hand[r]);
-            let best = Resource::ALL.into_iter().filter(|&r| !g.monopoly_locked(r)).max_by_key(|&r| (lacking(r), !self.produced[r]));
+            let best = Resource::ALL.into_iter().filter(|&r| !g.monopoly_locked_for(me, r)).max_by_key(|&r| (lacking(r), !self.produced[r]));
             if let Some(resource) = best {
                 // A fifth of the other players' cards, in tenths of a card.
                 let value = others * 2 + if lacking(resource) > 0 { 20 } else { 0 };
@@ -598,12 +604,28 @@ pub fn choose<R: Rng>(g: &Game, me: PlayerId, acted: u32, rng: &mut R) -> Option
         }
         _ => {}
     }
-    if g.current != me {
+    // In Speed mode nobody has a turn: while the table is open every bot may build, trade and play cards.
+    let open_table = g.settings.speed && g.phase == Phase::Main;
+    let waiting_offer = || g.trades.iter().find(|t| t.replies.get(me) == Some(&Reply::Pending)).map(|t| Action::RespondTrade { id: t.id, accept: false });
+    if g.current != me && !open_table {
         // Bots don't trade with people: any offer that is waiting for an answer from this seat is declined.
-        return g.trades.iter().find(|t| t.replies.get(me) == Some(&Reply::Pending)).map(|t| Action::RespondTrade { id: t.id, accept: false });
+        return waiting_offer();
     }
     let mind = Mind::new(g, me);
     match g.phase {
+        Phase::Main if open_table => {
+            if let Some(decline) = waiting_offer() {
+                return Some(decline);
+            }
+            if acted >= MAX_ACTIONS_PER_TURN {
+                return None; // enough for this roll; the next one starts a new count
+            }
+            // There is no turn to end: when nothing scores above "end turn", the bot simply waits.
+            match mind.main_move(rng) {
+                Some(Action::EndTurn) | None => None,
+                other => other,
+            }
+        }
         Phase::Setup => mind.setup_move(rng),
         Phase::Roll => mind.roll_move(rng),
         Phase::MoveRobber => mind.robber_move(rng),
@@ -616,8 +638,11 @@ pub fn choose<R: Rng>(g: &Game, me: PlayerId, acted: u32, rng: &mut R) -> Option
     }
 }
 
-/// The names bots are given. A table seats at most 8 and the host is always a person, so there are always enough.
-pub const NAMES: [&str; 7] = ["Bender", "C-3PO", "Multivac", "Skynet", "AM", "Hal 9000", "Data"];
+/// The names bots are given. A table seats at most 12 and the host is always a person, so there are always enough
+/// (at most 11 bots).
+pub const NAMES: [&str; 12] = [
+    "Bender", "C-3PO", "Multivac", "Skynet", "AM", "Hal 9000", "Data", "GLaDOS", "Marvin", "WOPR", "Johnny 5", "Bishop",
+];
 
 /// A name for a new bot: drawn at random from `NAMES`, leaving out every name in `taken` (the names at the table
 /// already, so nobody is ever named twice, and a name freed by taking a bot away can be drawn again). A person who
@@ -638,12 +663,16 @@ pub struct Driver {
     acted: Vec<u32>,
     /// Earliest moment of the next move.
     next: Instant,
+    /// Speed mode: the number of rolls so far (a bot's count of actions starts again with each roll), and the seat
+    /// the next search for a bot with something to do starts from, so that every bot gets its share of moves.
+    rolls: u32,
+    first: usize,
 }
 
 impl Driver {
     /// A driver whose first move comes a moment after `now`, so the game is on screen before a bot acts.
     pub fn new<R: Rng>(now: Instant, rng: &mut R) -> Driver {
-        Driver { acted: Vec::new(), next: now + think_time(rng) }
+        Driver { acted: Vec::new(), next: now + think_time(rng), rolls: 0, first: 0 }
     }
 
     /// Let one bot make one move if any has something to do and the pause since the last move is over.
@@ -655,20 +684,35 @@ impl Driver {
         if self.acted.len() != g.n {
             self.acted = vec![0; g.n];
         }
-        // A seat's count is for its current turn only.
-        for p in PlayerId::range(g.n) {
-            if p != g.current {
-                self.acted[p.index()] = 0;
+        let speed = g.settings.speed;
+        if speed {
+            // No turns: a seat's count is for the time between two rolls.
+            let rolls: u32 = g.roll_counts.iter().sum();
+            if rolls != self.rolls {
+                self.rolls = rolls;
+                self.acted = vec![0; g.n];
+            }
+        } else {
+            // A seat's count is for its current turn only.
+            for p in PlayerId::range(g.n) {
+                if p != g.current {
+                    self.acted[p.index()] = 0;
+                }
             }
         }
-        for p in PlayerId::range(g.n).filter(|&p| is_bot(p)) {
+        for off in 0..g.n {
+            let p = PlayerId::new(if speed { (self.first + off) % g.n } else { off });
+            if !is_bot(p) {
+                continue;
+            }
             let Some(action) = choose(g, p, self.acted[p.index()], rng) else { continue };
-            let on_turn = p == g.current;
+            let on_turn = speed || p == g.current;
             let ends_turn = matches!(action, Action::EndTurn);
             let shown = format!("{action:?}");
             return match g.apply_at(p, action, now) {
                 Ok(()) => {
                     self.acted[p.index()] = if ends_turn { 0 } else { self.acted[p.index()] + u32::from(on_turn) };
+                    self.first = (p.index() + 1) % g.n;
                     self.next = now + think_time(rng);
                     true
                 }
@@ -816,7 +860,7 @@ mod tests {
             drawn.sort();
             let mut all = NAMES.to_vec();
             all.sort();
-            assert_eq!(drawn, all, "seven draws use all seven names");
+            assert_eq!(drawn, all, "twelve draws use all twelve names");
         }
     }
 
@@ -834,9 +878,9 @@ mod tests {
             let name = bot_name(["data", "  AM ", "Ann"].into_iter(), &mut rng);
             assert!(NAMES.contains(&name.as_str()) && name != "Data" && name != "AM", "{name}");
         }
-        // Six of the seven are seated: the seventh is the only one that can come up.
-        let six = ["Bender", "C-3PO", "Multivac", "Skynet", "AM", "Hal 9000"];
-        assert_eq!(bot_name(six.into_iter(), &mut rng()), "Data");
+        // All but one of the names are seated: the one left is the only one that can come up.
+        let all_but_data: Vec<&str> = NAMES.iter().copied().filter(|&n| n != "Data").collect();
+        assert_eq!(bot_name(all_but_data.iter().copied(), &mut rng()), "Data");
     }
 
     #[test]
@@ -1276,6 +1320,30 @@ mod tests {
             })
         });
         check_games("earth/4 bridges", || start(4, "earth", Settings { bridges: true, ..Settings::default() }, |_| {}));
+    }
+
+    #[test]
+    fn bots_play_speed_games_without_a_refused_move() {
+        for n in 2..=4usize {
+            let mut g = start(n, "standard", Settings { speed: true, ..Settings::default() }, |_| {});
+            let mut rng = StdRng::seed_from_u64(100 + n as u64);
+            let mut now = Instant::now();
+            for step in 0..6000 {
+                if g.phase == Phase::GameOver {
+                    break;
+                }
+                now += Duration::from_millis(300);
+                g.tick(now);
+                for p in PlayerId::range(g.n) {
+                    let Some(action) = choose(&g, p, 0, &mut rng) else { continue };
+                    let shown = format!("{action:?}");
+                    g.apply_at(p, action, now).unwrap_or_else(|why| panic!("step {step}: seat {} tried {shown}: {why}", p.index()));
+                    break;
+                }
+            }
+            let rolls: u32 = g.roll_counts.iter().sum();
+            assert!(g.phase == Phase::GameOver || rolls > 20, "speed/{n}: the game went nowhere ({rolls} rolls)");
+        }
     }
 
     #[test]

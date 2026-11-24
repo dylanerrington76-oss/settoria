@@ -139,7 +139,8 @@ label { display: block; margin: 14px 0 4px; color: var(--mute); font-size: 13px;
 /* color picker on the join screen */
 .colors { border: 0; padding: 0; margin: 14px 0 4px; min-width: 0; }
 .colors legend { padding: 0; margin-bottom: 8px; color: var(--mute); font-size: 13px; }
-.swatches { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px 8px; justify-items: center; }
+.swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px 8px; justify-items: center; }
+@media (max-width: 380px) { .swatches { grid-template-columns: repeat(4, 1fr); } }
 .swatch { position: relative; display: block; margin: 0; width: 44px; height: 44px; cursor: pointer; }
 .swatch input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: inherit; }
 .swatch-dot {
@@ -196,6 +197,11 @@ button.pill:hover:not(:disabled) { filter: brightness(1.04); }
 
 .bottom.with-bridge { grid-template-columns: minmax(0, 1fr) 596px; }
 .actions.with-bridge { grid-template-columns: repeat(7, 80px); }
+/* Speed mode has no End turn button, so the action bar is one button shorter. */
+.bottom.speed { grid-template-columns: minmax(0, 1fr) 424px; }
+.bottom.speed.with-bridge { grid-template-columns: minmax(0, 1fr) 510px; }
+.actions.speed { grid-template-columns: repeat(5, 80px); }
+.actions.speed.with-bridge { grid-template-columns: repeat(6, 80px); }
 
 .act {
   position: relative; width: 80px; height: 80px; padding: 0; display: grid; place-items: center;
@@ -453,6 +459,9 @@ button.stack:disabled { opacity: 1; cursor: default; }
   .actions { order: 3; grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .bottom.with-bridge { grid-template-columns: minmax(0, 1fr); }
   .actions.with-bridge { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .bottom.speed, .bottom.speed.with-bridge { grid-template-columns: minmax(0, 1fr); }
+  .actions.speed { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .actions.speed.with-bridge { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .act { width: 100%; height: 64px; }
   .act svg { width: 40px; height: 40px; }
   .rail { padding: 3px; }

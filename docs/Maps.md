@@ -21,10 +21,10 @@ by a file of the same name.
 | Map (`id`) | Hexes | Players | Harbours | Notes |
 |---|---|---|---|---|
 | Standard (`standard`) | 19 | 2 to 4 | 9 on the coast ring (4 × 3:1, one 2:1 per resource) | A single island, randomised every game: 4 forest, 4 pasture, 4 fields, 3 hills, 3 mountains, 1 desert, and 18 number tokens. |
-| Earth (`earth`) | 81 | 2 to 8 | 27, fixed | Seven islands, with a faint hex grid drawn across the sea (`sea_grid`). |
-| USA (`usa`) | 140 | 2 to 8 | 25, fixed | One big island; every terrain, token and harbour kind is dealt at random. |
+| Earth (`earth`) | 81 | 2 to 12 | 27, fixed | Seven islands, with a faint hex grid drawn across the sea (`sea_grid`). |
+| USA (`usa`) | 140 | 2 to 12 | 25, fixed | One big island; every terrain, token and harbour kind is dealt at random. |
 | Texas | 65 | 2 to 4 | 10, fixed | **File only** (see below). |
-| Europe | 106 | 2 to 8 | 26, fixed | **File only** (see below). By Dylan Errington. |
+| Europe | 106 | 2 to 12 | 26, fixed | **File only** (see below). By Dylan Errington. |
 
 **Texas and Europe are files in `maps/builtin/` but are not built in:** they are not in `BUILTIN_MAPS`, and the maps
 folder is not searched below its top level, so a server started as it is does not offer them in the lobby. (Their
@@ -66,8 +66,8 @@ stops, and at most 10 can be uploaded between restarts.
 Whichever way a map arrives, its `name` and `author` are at most 32 characters of plain text (no line breaks, control
 characters or invisible characters), because the lobby shows them in small buttons.
 
-In the lobby, maps for another number of players than are seated are greyed out, so 5 to 8 players play on Earth,
-USA or a map that says so. A map may also suggest game rules (`recommended_settings`); the lobby offers them to the
+In the lobby, maps for another number of players than are seated are greyed out, so 5 to 12 players play on Earth,
+USA, Europe or a map that says so. A map may also suggest game rules (`recommended_settings`); the lobby offers them to the
 host and never applies them by itself.
 
 ## The map editor
@@ -110,7 +110,7 @@ random is written `"?"` (or left out).
 |---|---|
 | `version` | Always `1`. |
 | `name`, `author` | Shown in the lobby (at most 32 characters each). |
-| `players` | `{ "min": 2, "max": 8 }`, within 2 to 8 (2 to 4 if left out). |
+| `players` | `{ "min": 2, "max": 12 }`, within 2 to 12 (2 to 4 if left out). |
 | `hexes` | `{ "q": 1, "r": 0 }` per land hex (axial coordinates in `-100` to `100`, at most 500 hexes). Add `"terrain"` and/or `"number"` to fix them. |
 | `terrain_pool` | Terrains dealt to the hexes whose terrain isn't fixed: `{ "forest": 4, "desert": 1, ... }`. Must add up to exactly that many hexes. |
 | `token_pool` | Number tokens dealt to the numbered hexes whose number isn't fixed: `{ "6": 2, ... }` (2 to 12, never 7). Must add up to exactly the number of numbered hexes still waiting for a token. |

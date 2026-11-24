@@ -213,7 +213,7 @@ impl Default for PortsDef {
 
 /// The fewest and most players the engine can seat at one table.
 pub const MIN_PLAYERS: usize = 2;
-pub const MAX_PLAYERS: usize = 8;
+pub const MAX_PLAYERS: usize = 12;
 
 /// How many players the map is meant for
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

@@ -50,6 +50,7 @@ function shortStatus(v: GameView): string {
     case 'volcano_pick':
       return 'Volcano';
     case 'main':
+      if (v.settings.speed) return mine ? 'Robber next' : 'Next robber';
       return mine ? 'Your Turn' : 'Their Turn';
     case 'road_building':
       return mine ? `Place ${v.road_building_left} Road${v.road_building_left === 1 ? '' : 's'}` : 'Roads';
@@ -239,8 +240,10 @@ export function MobileTable({ v, status, board, overlays, clock, actions, hand, 
   const over = v.phase === 'game_over';
   const mineTurn = v.current === v.you;
   // The dice are yours to roll on your turn. On anyone else's turn, what they rolled is shown small under their card.
-  const bigDice = showDice && mineTurn && !over;
-  const smallDice = showDice && !mineTurn && !over && v.phase !== 'roll' && v.dice !== null;
+  // In Speed mode the server rolls, so everyone just sees the last roll in the big dice (never clickable).
+  const speed = v.settings.speed;
+  const bigDice = showDice && (mineTurn || speed) && !over;
+  const smallDice = showDice && !speed && !mineTurn && !over && v.phase !== 'roll' && v.dice !== null;
 
   return (
     <div className="m-table">

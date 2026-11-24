@@ -24,7 +24,7 @@ export const COST_BRIDGE: Res = [1, 1, 1, 0, 0];
 
 /** How many players one table seats (MIN_PLAYERS and MAX_PLAYERS in src/map_def.rs). */
 export const MIN_PLAYERS = 2;
-export const MAX_PLAYERS = 8;
+export const MAX_PLAYERS = 12;
 
 /** Colours a player can pick when joining. Hex values must match PALETTE in src/game.rs. */
 export const PALETTE = [
@@ -38,6 +38,8 @@ export const PALETTE = [
   { name: 'White', hex: '#FFFFFF' },
   { name: 'Silver', hex: '#8A8D8F' },
   { name: 'Black', hex: '#000000' },
+  { name: 'Maroon', hex: '#500000' },
+  { name: 'Khaki', hex: '#C8C372' },
 ] as const;
 
 export const colorName = (hex: string): string =>
@@ -145,7 +147,12 @@ export interface Settings {
   largest_army_min: number;
   starting_settlements: number;
   bank_ratio: number;
+  /** Settoria Speed: no turns, the server rolls every `SPEED_ROLL_SECS` seconds, everyone builds and trades at any time. */
+  speed: boolean;
 }
+
+/** Seconds between the automatic rolls in Speed mode (SPEED_ROLL_SECS in src/game.rs). */
+export const SPEED_ROLL_SECS = 20;
 
 /** The standard values; the host's starting point and the "Standard" choice for each setting. */
 export const DEFAULT_SETTINGS: Settings = {
@@ -167,6 +174,7 @@ export const DEFAULT_SETTINGS: Settings = {
   largest_army_min: 3,
   starting_settlements: 2,
   bank_ratio: 4,
+  speed: false,
 };
 
 /** Friendly Robber protects players with this many visible points or fewer in a standard game (2 starting settlements worth 1 point each). */
@@ -181,7 +189,7 @@ export function friendlyRobberMaxVp(s: Pick<Settings, 'starting_settlements' | '
 }
 
 /** What the running countdown is for. Only `turn` is the standard per-turn clock. */
-export type ClockKind = 'setup_settlement' | 'setup_road' | 'roll' | 'discard' | 'robber' | 'steal' | 'volcano' | 'turn';
+export type ClockKind = 'setup_settlement' | 'setup_road' | 'roll' | 'discard' | 'robber' | 'steal' | 'volcano' | 'turn' | 'auto_roll';
 export const CLOCK_LABELS: Record<ClockKind, string> = {
   setup_settlement: 'Settlement',
   setup_road: 'Road',
@@ -191,6 +199,7 @@ export const CLOCK_LABELS: Record<ClockKind, string> = {
   steal: 'Rob',
   volcano: 'Volcano',
   turn: '',
+  auto_roll: 'Next roll',
 };
 export const CLOCK_TITLES: Record<ClockKind, string> = {
   setup_settlement: 'Time left to place a settlement',
@@ -201,6 +210,7 @@ export const CLOCK_TITLES: Record<ClockKind, string> = {
   steal: 'Time left to choose who to rob (not counted against turn time)',
   volcano: 'Time left to pick a free resource from the volcano (not counted against turn time)',
   turn: 'Time left on this turn',
+  auto_roll: 'Time until the server rolls the dice',
 };
 export interface TimerView {
   kind: ClockKind;
@@ -373,6 +383,8 @@ export type LogEvent =
   | { type: 'setup_ended_early' }
   | { type: 'setup_complete' }
   | { type: 'rolled'; player: number; dice: [number, number] }
+  /** Speed mode: the server rolled, so nobody is the roller. */
+  | { type: 'dice_rolled'; dice: [number, number] }
   | { type: 'collected'; player: number; cards: Res }
   | { type: 'bank_short'; resource: number }
   | { type: 'must_discard'; limit: number }
@@ -410,6 +422,10 @@ export interface GameView {
   you: number;
   board: BoardData;
   phase: Phase;
+  /**
+   * Whose turn it is. In Speed mode nobody has one: in setup this is who places, and after it, whoever places the
+   * robber on the next 7 (or is placing it now: the player of a 7 in the rotation, or of a Knight).
+   */
   current: number;
   rolled: boolean;
   dice: [number, number] | null;
@@ -429,7 +445,7 @@ export interface GameView {
   ratios: [number, number, number, number, number];
   /** The harbours you own: players can't be offered the bank-rate deals these give (see `bankRateDeal`). */
   harbours: Harbours;
-  /** Resources you can't play Monopoly on until your turn ends; none unless it is your turn (MONOPOLY_LOCK_CARDS in src/game.rs). */
+  /** Resources you can't play Monopoly on until your turn ends (Speed mode: until the next roll); none unless it is your turn (MONOPOLY_LOCK_CARDS in src/game.rs). */
   monopoly_locked: boolean[];
   setup_needs: 'settlement' | 'road' | null;
   discards: [number, number][];
@@ -440,8 +456,9 @@ export interface GameView {
   lava: Lava | null;
   /** Corners holding a settlement that is on loan after lava hit a city and its owner had no settlement piece left. */
   damaged: number[];
+  /** Free roads still to place: from the phase after a Road Building card, or (Speed mode) your own credit of free roads. */
   road_building_left: number;
-  /** Offers currently open; only the player whose turn it is can have any. */
+  /** Offers currently open; in a classic game only the player whose turn it is can have any. */
   trades: Trade[];
   legal: Legal;
   longest_road_holder: number | null;

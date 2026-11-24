@@ -48,7 +48,7 @@ fn every_bad_coordinate_and_duplicate_is_reported() {
 
 #[test]
 fn the_player_range_and_recommended_settings_are_checked() {
-    for (min, max) in [(1, 4), (2, 9), (4, 2), (0, 0)] {
+    for (min, max) in [(1, 4), (2, 13), (4, 2), (0, 0)] {
         let mut d = flower();
         d.players = PlayerRange { min, max };
         assert_error(&d, MapError::BadPlayerRange { min, max });
@@ -91,12 +91,12 @@ fn the_name_and_author_must_be_short_plain_text() {
 #[test]
 fn rule_problems_do_not_hide_content_problems() {
     let mut d = flower();
-    d.players = PlayerRange { min: 9, max: 9 };
+    d.players = PlayerRange { min: 13, max: 13 };
     d.terrain_pool.clear();
     let r = check(&d);
     assert_eq!(
         r.errors,
-        vec![MapError::BadPlayerRange { min: 9, max: 9 }, MapError::TerrainPoolMismatch { random_hexes: 6, pool: 0 }]
+        vec![MapError::BadPlayerRange { min: 13, max: 13 }, MapError::TerrainPoolMismatch { random_hexes: 6, pool: 0 }]
     );
 }
 

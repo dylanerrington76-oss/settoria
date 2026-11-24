@@ -184,6 +184,6 @@ it in `src/validate/`, mirror it in `mapModel.ts`, and document it in [Maps](Map
 
 - One table, one game at a time, held in memory; there is no database or saved game.
 - No accounts and no encryption: a seat is held by a random token, and the server is meant for a trusted local network.
-- Up to 8 seats (`MAX_PLAYERS`), and no spectators: a new player is refused once a game has started.
+- Up to 12 seats (`MAX_PLAYERS`), and no spectators: a new player is refused once a game has started.
 - At most 100 maps are read from the maps folder and 10 uploaded between restarts, each at most 256 KB, 500 hexes.
 - Bots never propose trades and decline every offer.

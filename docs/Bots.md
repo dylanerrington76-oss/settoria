@@ -16,9 +16,9 @@ how to use one and how one decides what to do. The code is `src/bot.rs`: the num
 
 - The host presses **Add bot** in the lobby to seat a computer player; the ✕ on a bot's row takes it away again. Only the
   host can add or remove bots, and only in the lobby (`add_bot` and `remove_bot` in [Protocol](Protocol.md#room-messages)).
-- Bots count towards the table limit: people and bots together are at most 8, and a game needs at least two seats, which
+- Bots count towards the table limit: people and bots together are at most 12, and a game needs at least two seats, which
   can be one person and one bot.
-- Each bot is named after a famous robot, drawn at random from Bender, C-3PO, Multivac, Skynet, AM, Hal 9000 and Data. A
+- Each bot is named after a famous robot, drawn at random from Bender, C-3PO, Multivac, Skynet, AM, Hal 9000, Data, GLaDOS, Marvin, WOPR, Johnny 5 and Bishop. A
   name a person or another bot at the table already has is never used (and a person called one of those names keeps it).
   If every name is taken, the bot is "Bot 1", "Bot 2" and so on.
 - A bot is always "connected", plays whenever it is its turn (about half a second to a second per move, so you can follow
