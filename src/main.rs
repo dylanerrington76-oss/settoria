@@ -150,6 +150,8 @@ struct Synced {
     log_end: usize,
     /// When the countdown in `state` was last sent; see `steady_timer`.
     timer_at: Instant,
+    /// How many times the countdown has been sent afresh since the last whole view; see `stamp_timer`.
+    timer_sent: u64,
 }
 
 /// How far a countdown may be from where the client has counted it to before the server sends the time again.
@@ -176,6 +178,38 @@ fn steady_timer(prev: &serde_json::Value, next: &mut serde_json::Value, sent_at:
     } else {
         now
     }
+}
+
+/// Mark the countdown in `state` with how many times it has been sent afresh (`timer_sent`), as `timer.sent`.
+///
+/// Without it a restarted countdown can go unnoticed: in Speed mode the clock starts again at the same 20 s after every
+/// roll, so its `remaining_ms` is the same as the one the client was last sent, the diff finds nothing to say about the
+/// timer, and the client's countdown (which restarts only when it hears something about the timer) runs down to 00:00
+/// and stays there until the next roll changes some other value. Every fresh send now changes `sent`, so there is always
+/// an op for the client to restart its countdown on. Nothing is added until the first fresh send: a whole view has no
+/// `sent`, and neither does the state kept for it.
+fn stamp_timer(state: &mut serde_json::Value, timer_sent: u64) {
+    if timer_sent == 0 {
+        return;
+    }
+    if let Some(clock) = state.get_mut("timer").and_then(serde_json::Value::as_object_mut) {
+        clock.insert("sent".to_string(), serde_json::Value::from(timer_sent));
+    }
+}
+
+/// What to do about the countdown in `state` (the seat's next view) before it is diffed against what the seat holds:
+/// leave out a time the client has counted to (`steady_timer`) and stamp the rest (`stamp_timer`). Returns when the
+/// countdown was last sent and how many times it has been sent afresh, for the seat to keep once the message goes out.
+fn sync_timer(synced: &Synced, state: &mut serde_json::Value, now: Instant) -> (Instant, u64) {
+    let timer_at = steady_timer(&synced.state, state, synced.timer_at, now);
+    let mut sent = synced.timer_sent;
+    if timer_at != synced.timer_at && state.get("timer").is_some_and(serde_json::Value::is_object) {
+        // The countdown is sent afresh (it started, changed hands, got a bonus or began again): the client must be
+        // able to tell, even when its `remaining_ms` is just what it was.
+        sent += 1;
+    }
+    stamp_timer(state, sent);
+    (timer_at, sent)
 }
 
 /// Tell one seat how the game stands. A seat that didn't ask for patches is sent the whole view. One that
@@ -209,11 +243,11 @@ fn update_seat(seat: &mut Seat, mut view: game::GameView<'_>) {
         if let Ok(text) = whole {
             let _ = tx.send(text);
         }
-        seat.synced = Some(Synced { state, seq: 0, log_end, timer_at: now });
+        seat.synced = Some(Synced { state, seq: 0, log_end, timer_at: now, timer_sent: 0 });
         return;
     }
     let Some(synced) = seat.synced.as_mut() else { return };
-    let timer_at = steady_timer(&synced.state, &mut state, synced.timer_at, now);
+    let (timer_at, timer_sent) = sync_timer(synced, &mut state, now);
     let mut ops = Vec::new();
     patch::diff(&synced.state, &state, &mut ops);
     let fresh = &log[(synced.log_end - log_start).min(log.len())..];
@@ -230,6 +264,7 @@ fn update_seat(seat: &mut Seat, mut view: game::GameView<'_>) {
     synced.state = state;
     synced.log_end = log_end;
     synced.timer_at = timer_at;
+    synced.timer_sent = timer_sent;
     send(&tx, &msg);
 }
 
@@ -1363,11 +1398,12 @@ mod tests {
         }
     }
 
-    /// A view with its countdown's `remaining_ms` zeroed: that is the one thing a patched client's copy may
-    /// differ in (see `steady_timer`).
+    /// A view with its countdown's `remaining_ms` zeroed and its `sent` count dropped: those are the only things a
+    /// patched client's copy may differ in (see `steady_timer` and `stamp_timer`).
     fn without_clock(mut view: Value) -> Value {
         if let Some(clock) = view.get_mut("timer").and_then(Value::as_object_mut) {
             clock.insert("remaining_ms".to_string(), json!(0));
+            clock.remove("sent");
         }
         view
     }
@@ -1594,6 +1630,41 @@ mod tests {
         let mut next = clock(90_000, 1);
         assert_eq!(steady_timer(&json!({ "timer": null }), &mut next, sent_at, now), now);
         assert_eq!(next, clock(90_000, 1));
+    }
+
+    #[test]
+    fn a_countdown_that_starts_again_at_the_same_time_is_still_sent() {
+        // Speed mode: the roll countdown starts again at 20 s after every roll, so what the client is told is the same
+        // number each time. It must still be told something, or its clock runs down to 00:00 and stays there.
+        let clock = |remaining_ms: u64| json!({ "timer": { "kind": "auto_roll", "player": 0, "remaining_ms": remaining_ms, "total_ms": 20_000 } });
+        let t0 = Instant::now();
+        let mut synced = Synced { state: clock(19_999), seq: 1, log_end: 0, timer_at: t0, timer_sent: 0 };
+
+        // a build 5 s in: the client has counted to there by itself, so nothing is said about the timer
+        let mut next = clock(15_000);
+        let (at, sent) = sync_timer(&synced, &mut next, t0 + Duration::from_millis(5_000));
+        let mut ops = vec![];
+        patch::diff(&synced.state, &next, &mut ops);
+        assert!(ops.is_empty(), "{ops:?}");
+        assert_eq!((at, sent), (t0, 0));
+
+        // every roll after that: the same 19 999 ms, and the client has to restart its countdown
+        for round in 1..=3u64 {
+            let now = t0 + Duration::from_millis(20_000 * round);
+            let mut next = clock(19_999);
+            let (at, sent) = sync_timer(&synced, &mut next, now);
+            let mut ops = vec![];
+            patch::diff(&synced.state, &next, &mut ops);
+            assert_eq!(ops, vec![json!([["timer", "sent"], round])], "roll {round}");
+            synced.state = next;
+            synced.timer_at = at;
+            synced.timer_sent = sent;
+        }
+
+        // and a clock that has gone has nothing to stamp
+        let mut next = json!({ "timer": null });
+        let (_, sent) = sync_timer(&synced, &mut next, t0 + Duration::from_millis(90_000));
+        assert_eq!((next, sent), (json!({ "timer": null }), 3));
     }
 
     // ------------------------------------------------------------------

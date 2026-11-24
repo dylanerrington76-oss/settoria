@@ -237,7 +237,8 @@ mod tests {
                 ("earth", "Earth", MapSource::Builtin),
                 ("usa", "USA", MapSource::Builtin),
                 ("texas", "Texas", MapSource::Builtin),
-                ("europe", "Europe", MapSource::Builtin)
+                ("europe", "Europe", MapSource::Builtin),
+                ("maritime southeast asia", "Maritime Southeast Asia", MapSource::Builtin)
             ]
         );
     }
@@ -274,6 +275,7 @@ mod tests {
         assert_eq!(find(&maps, "usa").unwrap().hexes.len(), 140);
         assert_eq!(find(&maps, "texas").unwrap().hexes.len(), 65);
         assert_eq!(find(&maps, "europe").unwrap().hexes.len(), 106);
+        assert_eq!(find(&maps, "maritime southeast asia").unwrap().hexes.len(), 250);
         assert!(find(&maps, "atlantis").is_none());
         assert!(find(&maps, "").is_none());
         assert!(find(&maps, "Earth").is_none(), "ids are case-sensitive");

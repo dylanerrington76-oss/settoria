@@ -220,7 +220,10 @@ an index into an array. For example `[["buildings", 17], {"owner": 1, "city": fa
 that is mostly `null`, like `buildings` and `roads`, or one of objects, like `players`); a short list of numbers, such as
 `hand`, comes whole, and so does an array whose length has changed (`trades`). `remaining_ms` of the `timer` is left out
 while the same countdown runs where the client has counted it to (within half a second), so it is sent when the clock
-starts, changes hands, or is given a bonus.
+starts, changes hands, or is given a bonus. Every such fresh send also raises `timer.sent`, a count that is only in
+patched views (a whole view has none). That is how a client learns that a countdown started again at the very same
+`remaining_ms`, as the Speed mode roll countdown does after every roll: a client restarts its own countdown whenever it
+is told anything about the `timer`.
 
 The log is numbered, not patched: `log` holds the events the client doesn't have, the first of which is number
 `log_from`. The client appends them and keeps the newest 25 (`LOG_WINDOW`, the same number in `src/game.rs` and

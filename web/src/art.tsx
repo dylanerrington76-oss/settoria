@@ -380,13 +380,13 @@ export function DieFace({ n, r = 13.5 }: { n: number; r?: number }) {
 }
 
 /* Toolbar + action bar icons */
-export const Chevron = ({ dir = 'up' }: { dir?: 'up' | 'down' | 'left' }) => (
-  <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" style={{ transform: `rotate(${dir === 'up' ? 0 : dir === 'down' ? 180 : -90}deg)` }}>
+export const Chevron = ({ dir = 'up' }: { dir?: 'up' | 'down' | 'left' | 'right' }) => (
+  <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" style={{ transform: `rotate(${dir === 'up' ? 0 : dir === 'down' ? 180 : dir === 'right' ? 90 : -90}deg)` }}>
     <path d="M3.5 13 L10 6.5 L16.5 13" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 
-export function ToolIcon({ kind }: { kind: 'gear' | 'book' | 'expand' | 'info' }) {
+export function ToolIcon({ kind }: { kind: 'gear' | 'book' | 'expand' | 'info' | 'plus' | 'minus' }) {
   const common = { fill: '#fff', stroke: '#0a4f80', strokeWidth: 1.6, strokeLinejoin: 'round' as const };
   let body: ReactNode;
   if (kind === 'gear') {
@@ -412,6 +412,14 @@ export function ToolIcon({ kind }: { kind: 'gear' | 'book' | 'expand' | 'info' }
     body = (
       <g fill="none" stroke="#fff" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round">
         <path d="M5 14 V5 H14 M26 5 H35 V14 M35 26 V35 H26 M14 35 H5 V26" />
+      </g>
+    );
+  } else if (kind === 'plus' || kind === 'minus') {
+    // the same white disc as the info button, with a plain + or − on it
+    body = (
+      <g>
+        <circle cx="20" cy="20" r="16.5" {...common} />
+        <path d={kind === 'plus' ? 'M12 20 H28 M20 12 V28' : 'M12 20 H28'} fill="none" stroke="#0a5b92" strokeWidth="3.6" strokeLinecap="round" />
       </g>
     );
   } else {

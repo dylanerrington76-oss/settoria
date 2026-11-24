@@ -1,6 +1,7 @@
 import { DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { ActionIcon, Avatar, Chevron, DieFace, ToolIcon } from './art';
 import Board from './Board';
+import type { MapZoomApi, ZoomEdge } from './mapZoom';
 import Changelog from './Changelog';
 import Footer from './Footer';
 import MapEditor from './MapEditor';
@@ -607,6 +608,13 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
   const [logOpen, setLogOpen] = useState(true);
   const [pick, setPick] = useState<Res>([0, 0, 0, 0, 0]);
   const [statsOpen, setStatsOpen] = useState(true);
+  // The sidebar (log, bank, players) can be folded away to give the board the room.
+  const [railOpen, setRailOpen] = useState(true);
+  // The + and − buttons act on the board through `zoomApi`; `zoomEdge` tells them when the board can go no further.
+  const zoomApi = useRef<MapZoomApi | null>(null);
+  const [zoomEdge, setZoomEdge] = useState<ZoomEdge>('min');
+  const zoomIn = () => zoomApi.current?.zoomIn();
+  const zoomOut = () => zoomApi.current?.zoomOut();
   const phone = useIsPhone();
 
   const speed = v.settings.speed;
@@ -650,8 +658,8 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
     if (document.fullscreenElement) void document.exitFullscreen();
     else void document.documentElement.requestFullscreen?.();
   };
-  const tool = (kind: 'gear' | 'book' | 'expand' | 'info', label: string, fn: () => void): ReactNode => (
-    <button className="tool" aria-label={label} title={label} onClick={fn}>
+  const tool = (kind: 'gear' | 'book' | 'expand' | 'info' | 'plus' | 'minus', label: string, fn: () => void, disabled = false): ReactNode => (
+    <button className="tool" aria-label={label} title={label} onClick={fn} disabled={disabled}>
       <ToolIcon kind={kind} />
     </button>
   );
@@ -674,6 +682,8 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
         if (v.phase === 'main') setMode(null);
       }}
       onHex={(i) => act({ type: 'move_robber', hex: i })}
+      zoomApi={zoomApi}
+      onZoomEdge={setZoomEdge}
     />
   );
 
@@ -871,6 +881,9 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
           onRoll={() => act({ type: 'roll' })}
           onSettings={() => setDialog('settings')}
           onInfo={() => setDialog('info')}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          zoomEdge={zoomEdge}
         />
         {dialogEls}
       </>
@@ -878,7 +891,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
   }
 
   return (
-    <div className="table">
+    <div className={'table' + (railOpen ? '' : ' rail-collapsed')}>
       <div className="left">
         <main className="stage">
           <nav className="tools" aria-label="Game menu">
@@ -886,7 +899,20 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
             {tool('book', 'Building costs', () => setDialog('rules'))}
             {tool('expand', 'Full screen', toggleFull)}
             {tool('info', 'Game info', () => setDialog('info'))}
+            {tool('plus', 'Zoom in', zoomIn, zoomEdge === 'max')}
+            {tool('minus', 'Zoom out', zoomOut, zoomEdge === 'min')}
           </nav>
+
+          <button
+            className="rail-toggle"
+            aria-label={railOpen ? 'Hide sidebar' : 'Show sidebar'}
+            title={railOpen ? 'Hide sidebar' : 'Show sidebar'}
+            aria-expanded={railOpen}
+            aria-controls="game-rail"
+            onClick={() => setRailOpen(!railOpen)}
+          >
+            <Chevron dir={railOpen ? 'right' : 'left'} />
+          </button>
 
           {boardEl}
 
@@ -933,7 +959,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
         </div>
       </div>
 
-      <aside className={'rail' + (v.players.length > 5 ? ' crowded' : '')}>
+      <aside id="game-rail" className={'rail' + (v.players.length > 5 ? ' crowded' : '')}>
         <section className={'logpanel' + (logOpen ? '' : ' closed')}>
           <Log lines={v.log} v={v} />
         </section>

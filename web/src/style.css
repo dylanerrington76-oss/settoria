@@ -162,11 +162,31 @@ label { display: block; margin: 14px 0 4px; color: var(--mute); font-size: 13px;
 .table { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 350px; }
 .left { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .stage { flex: 1; position: relative; min-height: 0; padding: 4px 0 0; }
-.board { width: 100%; height: 100%; display: block; }
+.board { width: 100%; height: 100%; display: block; touch-action: none; -webkit-user-select: none; user-select: none; }
+/* zoom and pan: a zoomed-in map can be dragged (the <svg> clips whatever falls outside it, so nothing else on the screen is affected) */
+.board.zoomed { cursor: grab; }
+.board[data-panning] { cursor: grabbing; }
 
 .tools { position: absolute; left: 12px; top: 8px; display: flex; flex-direction: column; gap: 14px; z-index: 3; }
 .tool { background: none; border: 0; padding: 2px; border-radius: 8px; line-height: 0; filter: drop-shadow(0 1px 1px rgba(0, 40, 80, 0.5)); }
-.tool:hover { filter: drop-shadow(0 1px 1px rgba(0, 40, 80, 0.5)) brightness(1.15); }
+.tool:hover:not(:disabled) { filter: drop-shadow(0 1px 1px rgba(0, 40, 80, 0.5)) brightness(1.15); }
+.tool:disabled { opacity: 0.45; cursor: default; }
+
+/* the button that folds the sidebar away: a tab on the right edge of the board area, so it follows the sidebar's edge */
+.rail-toggle { position: absolute; right: 0; top: 8px; z-index: 3; width: 28px; height: 48px; padding: 0; display: grid; place-items: center; background: var(--cream); color: #333; border: 0; border-radius: 8px 0 0 8px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 30, 60, 0.3); }
+.rail-toggle:hover { filter: brightness(1.05); }
+.rail-toggle:focus-visible { outline: 3px solid #ffd84a; outline-offset: 1px; }
+/* Beside the board the sidebar slides out; below 961px it sits under the board instead, where there is nothing to fold away. */
+@media (min-width: 961px) {
+  .table { overflow: hidden; }
+  .rail { width: 350px; }
+  .table.rail-collapsed { grid-template-columns: minmax(0, 1fr) 0; }
+  .table.rail-collapsed .rail { visibility: hidden; }
+}
+@media (min-width: 961px) and (prefers-reduced-motion: no-preference) {
+  .table { transition: grid-template-columns 0.22s ease; }
+  .table.rail-collapsed .rail { transition: visibility 0s 0.22s; }
+}
 
 .bottom { display: grid; grid-template-columns: minmax(0, 1fr) 510px; grid-template-rows: 40px 80px; gap: 5px 6px; padding: 0 2px 3px 3px; }
 .status { grid-column: 2; display: flex; justify-content: flex-end; gap: 6px; }
@@ -469,6 +489,7 @@ button.stack:disabled { opacity: 1; cursor: default; }
   .die { width: 56px; height: 56px; padding: 5px; }
   .stage { --die: 56px; }
   .discard { width: 100%; }
+  .rail-toggle { display: none; }
   .tools { flex-direction: row; gap: 10px; left: 8px; top: 4px; }
   .tool svg { width: 30px; height: 30px; }
   .stage { padding-top: 40px; }

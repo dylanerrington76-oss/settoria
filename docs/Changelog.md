@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+### [v2026.11.24]
+added new map Maritime Southeast Asia.
+
 ### [v2026.11.23]
 Added support for up to 12 players.
 

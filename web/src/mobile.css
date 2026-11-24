@@ -431,6 +431,20 @@ html.m-lock body {
   font-size: 14px;
 }
 
+/* the + and − buttons: down the left edge of the board, under the info button in the bar above */
+.m-table .m-zoom {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.m-table .m-zoom .tool svg {
+  width: 34px;
+  height: 34px;
+}
 .m-table .m-logbtn {
   position: absolute;
   left: 8px;

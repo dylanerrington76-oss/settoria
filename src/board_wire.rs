@@ -78,6 +78,7 @@ mod tests {
         for (id, text) in [
             ("europe", include_str!("../maps/builtin/europe.json")),
             ("texas", include_str!("../maps/builtin/texas.json")),
+            ("maritime southeast asia", include_str!("../maps/builtin/maritime_southeast_asia.json")),
         ] {
             out.push((id, MapDef::from_json(text).unwrap_or_else(|e| panic!("`{id}` is not a map: {e}"))));
         }

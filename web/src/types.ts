@@ -217,6 +217,12 @@ export interface TimerView {
   player: number;
   remaining_ms: number;
   total_ms: number;
+  /**
+   * Only in patched views: counts how often the server has sent the countdown afresh. It changes whenever the
+   * countdown restarts, even at the same `remaining_ms` (Speed mode restarts at 20 s after every roll), so the
+   * `timer` object is replaced and the clock counts down again from the time it holds.
+   */
+  sent?: number;
 }
 
 export type Terrain = 'hills' | 'forest' | 'mountains' | 'fields' | 'pasture' | 'desert' | 'volcano' | 'gold';

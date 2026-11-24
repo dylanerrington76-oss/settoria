@@ -19,12 +19,13 @@ use std::collections::BTreeMap;
 pub const DEFAULT_MAP: &str = "standard";
 
 /// Each built-in map's id and the text of its file. The id is what the lobby and the game log call it.
-pub const BUILTIN_MAPS: [(&str, &str); 5] = [
+pub const BUILTIN_MAPS: [(&str, &str); 6] = [
     ("standard", include_str!("../maps/builtin/standard.json")),
     ("earth", include_str!("../maps/builtin/earth.json")),
     ("usa", include_str!("../maps/builtin/usa.json")),
     ("texas", include_str!("../maps/builtin/texas.json")),
     ("europe", include_str!("../maps/builtin/europe.json")),
+    ("maritime southeast asia", include_str!("../maps/builtin/maritime_southeast_asia.json")),
 ];
 
 /// The built-in maps, read once.

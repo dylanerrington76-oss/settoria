@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { Chevron, CountCard, DieFace, KnightsIcon, PersonIcon, PieceShape, RoadLenIcon, ToolIcon, isVeryDark, pieceEdge, shade } from './art';
 import { BankRow, Log, WinBar } from './ui';
+import type { ZoomEdge } from './mapZoom';
 import { GameView, luminance, total } from './types';
 
 /**
@@ -223,9 +224,13 @@ export interface MobileTableProps {
   onRoll: () => void;
   onSettings: () => void;
   onInfo: () => void;
+  /** The board's + and − buttons, and whether it is already as far in or out as it goes. */
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  zoomEdge: ZoomEdge;
 }
 
-export function MobileTable({ v, status, board, overlays, clock, actions, hand, discard, dice, showDice, canRoll, onRoll, onSettings, onInfo }: MobileTableProps) {
+export function MobileTable({ v, status, board, overlays, clock, actions, hand, discard, dice, showDice, canRoll, onRoll, onSettings, onInfo, onZoomIn, onZoomOut, zoomEdge }: MobileTableProps) {
   const [piecesOpen, setPiecesOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   // The page itself must not scroll or bounce under the game, and the sea should show where the page ends.
@@ -307,6 +312,14 @@ export function MobileTable({ v, status, board, overlays, clock, actions, hand, 
 
       <main className="m-stage">
         {board}
+        <div className="m-zoom" aria-label="Zoom the board">
+          <button className="tool" aria-label="Zoom in" title="Zoom in" onClick={onZoomIn} disabled={zoomEdge === 'max'}>
+            <ToolIcon kind="plus" />
+          </button>
+          <button className="tool" aria-label="Zoom out" title="Zoom out" onClick={onZoomOut} disabled={zoomEdge === 'min'}>
+            <ToolIcon kind="minus" />
+          </button>
+        </div>
         {overlays}
         {bigDice && (
           <button className={'dice' + (canRoll ? ' ready' : '')} disabled={!canRoll} onClick={onRoll} aria-label={canRoll ? 'Roll dice' : 'Last roll'}>
