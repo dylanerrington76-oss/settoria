@@ -233,6 +233,8 @@ button.pill:hover:not(:disabled) { filter: brightness(1.04); }
 .act:disabled svg { opacity: 0.42; }
 .act:not(:disabled):hover { filter: brightness(1.08); }
 .act.on { outline: 3px solid #ffd84a; outline-offset: 1px; }
+/* Something this button builds or buys is available right now: green outline in place of the white one. */
+.act.buildable { border-color: #2fd45a; box-shadow: 0 0 0 1px rgba(0, 60, 20, 0.35), 0 0 8px 1px rgba(47, 212, 90, 0.7), inset 0 0 0 1px rgba(255, 255, 255, 0.25); }
 .act-badge { position: absolute; top: 2px; right: 2px; min-width: 26px; height: 26px; padding: 0 5px; border-radius: 13px; background: rgba(78, 112, 124, 0.72); color: #fff; font-size: 14px; font-weight: 700; display: grid; place-items: center; }
 
 /* ---------- dice ---------- */

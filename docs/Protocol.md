@@ -1,7 +1,7 @@
 # Protocol
 
 Everything the browser and the server say to each other: one WebSocket at `/ws` for the lobby and the game, and two
-small HTTP routes. The code is `src/main.rs` (messages and the room), `src/game.rs` (actions and the view),
+small HTTP routes. The code is `src/main.rs` (messages and the room), `src/game/` (actions and the view),
 `src/patch.rs` and `src/board_wire.rs`; the browser's half is in `web/src/useGame.ts`, `types.ts`, `patch.ts` and
 `boardGeometry.ts`.
 
@@ -29,7 +29,7 @@ small HTTP routes. The code is `src/main.rs` (messages and the room), `src/game.
   [The board on the wire](#the-board-on-the-wire).
 - The server decides everything. A client message that isn't allowed is answered with an `error` and changes nothing; an
   action that is allowed is answered by the new state, sent to every seat.
-- `color` is one of the palette strings in `PALETTE` (`src/game.rs`, mirrored in `web/src/types.ts`).
+- `color` is one of the palette strings in `PALETTE` (`src/game/player.rs`, mirrored in `web/src/types.ts`).
 
 ## Client to server
 
@@ -43,7 +43,7 @@ There are two kinds of message: **room messages** (joining and the lobby) and **
 | `{"type":"resync"}` | a seat that is sent patches | Asks for the whole view again (see [Patches](#patches)). |
 | `{"type":"set_timer","mode"}` | host, lobby | `mode` is `very_fast`, `fast`, `normal` or `slow`. |
 | `{"type":"set_map","map"}` | host, lobby | `map` is the `id` of a map in the lobby's `maps`. An id the server doesn't have is refused and nothing changes. |
-| `{"type":"set_settings","settings"}` | host, lobby | `settings` is the whole object listed in [Rules](Rules.md#game-settings), using the field names of `Settings` in `src/game.rs`: `points_to_win`, `discard_limit`, `friendly_robber`, `bridges`, `max_roads`, `max_cities`, `max_settlements`, `dev_cards`, `resource_max`, `settlement_points`, `city_points`, `longest_road_points`, `largest_army_points`, `vp_card_points`, `longest_road_min`, `largest_army_min`, `starting_settlements`, `bank_ratio`, `speed`. An invalid object is refused with an `error`, and the lobby is sent again with the previous values. |
+| `{"type":"set_settings","settings"}` | host, lobby | `settings` is the whole object listed in [Rules](Rules.md#game-settings), using the field names of `Settings` in `src/game/settings.rs`: `points_to_win`, `discard_limit`, `friendly_robber`, `bridges`, `max_roads`, `max_cities`, `max_settlements`, `dev_cards`, `resource_max`, `settlement_points`, `city_points`, `longest_road_points`, `largest_army_points`, `vp_card_points`, `longest_road_min`, `largest_army_min`, `starting_settlements`, `bank_ratio`, `speed`. An invalid object is refused with an `error`, and the lobby is sent again with the previous values. |
 | `{"type":"add_bot"}` | host, lobby | Seats a computer player, named at random from Bender, C-3PO, Multivac, Skynet, AM, Hal 9000, Data, GLaDOS, Marvin, WOPR, Johnny 5 and Bishop, never one a person or another bot at the table already has. Refused when 12 seats are taken, bots included. |
 | `{"type":"remove_bot","seat"}` | host, lobby | `seat` is the bot's index in the lobby's `players`; refused if that seat is not a bot. |
 | `{"type":"start"}` | host, lobby | Starts the game. Refused with fewer than 2 seats, when the map doesn't take that many players, when the starting settlements won't fit, or when the map can't be dealt. |
@@ -226,7 +226,7 @@ patched views (a whole view has none). That is how a client learns that a countd
 is told anything about the `timer`.
 
 The log is numbered, not patched: `log` holds the events the client doesn't have, the first of which is number
-`log_from`. The client appends them and keeps the newest 25 (`LOG_WINDOW`, the same number in `src/game.rs` and
+`log_from`. The client appends them and keeps the newest 25 (`LOG_WINDOW`, the same number in `src/game/view.rs` and
 `web/src/patch.ts`, which must agree), and `log_start` is the number of the first it keeps. A client that finds
 `log_from` isn't where its own log ends asks for a `resync`.
 

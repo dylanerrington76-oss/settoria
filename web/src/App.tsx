@@ -593,6 +593,9 @@ function TurnClock({ timer, override }: { timer: TimerView | null; override?: nu
   );
 }
 
+/** The actions that build or buy something: when one of these can be done right now its button gets a green outline. */
+const BUILD_KINDS = new Set(['dev', 'road', 'bridge', 'settlement', 'city']);
+
 function ActBtn({
   kind,
   badge,
@@ -611,7 +614,7 @@ function ActBtn({
   onClick: () => void;
 }) {
   return (
-    <button className={'act' + (on ? ' on' : '')} disabled={disabled} onClick={onClick} aria-label={label} title={title}>
+    <button className={'act' + (on ? ' on' : '') + (!disabled && BUILD_KINDS.has(kind) ? ' buildable' : '')} disabled={disabled} onClick={onClick} aria-label={label} title={title}>
       <ActionIcon kind={kind} />
       {badge !== undefined && <span className="act-badge">{badge}</span>}
     </button>

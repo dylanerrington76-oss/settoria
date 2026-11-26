@@ -21,7 +21,7 @@ small HTTP routes. There is one table per server, held in memory.
     browser (React, SVG board)  <-- WebSocket /ws -->  axum server (src/main.rs)
         web/src                    JSON messages            |
                                                             +-- Room: seats, lobby choices, bots      (main.rs, bot.rs)
-        also fetches:                                       +-- Game: the rules and the clocks        (game.rs)
+        also fetches:                                       +-- Game: the rules and the clocks        (game/)
           /api/lobby, POST /api/maps                        |     +-- Board: hexes, corners, sides    (board.rs)
           static files from web/dist                        +-- Map registry: built-ins, folder, uploads
                                                             |        (maps.rs, map_loader.rs, map_files.rs)
@@ -36,7 +36,8 @@ is built per seat).
 | File | What it holds |
 |---|---|
 | `src/main.rs` | The `Room` (seats, host choices, the game, the bots) behind a single `Mutex`; the WebSocket handler; the lobby and game messages; `update_seat` (whole views or patches); `GET /api/lobby`, `POST /api/maps`; static file serving (the `.br` and `.gz` copies the build writes, and cache headers: `immutable` for `/assets`, `no-cache` for `index.html`); the 200 ms timer loop; startup and the `validate` subcommand. |
-| `src/game.rs` | **All the rules and clocks.** `Settings`, `Action`, `Game::apply` (validates and carries out every action), `Game::tick` (fires a timeout), `Game::view` (what one seat sees), the volcano and trade rules, plus the unit and random-play tests. The biggest file by far. |
+| `src/game.rs` | **The rules and clocks, start here.** The `Game` struct (the state of one game), `Phase`, and the module list for `src/game/`, which holds everything else: see below. Re-exports what the rest of the program uses, so it says `game::Action`, not `game::action::Action`. |
+| `src/game/` | One file per part of the rules, each an `impl Game` block: `settings.rs` (`Settings`), `setup.rs` (constructors, the setup phase), `action.rs` (`Action`, `Game::apply`: validates and carries out every action), `turn.rs` (dice, production, ending the turn), `legal.rs` (where things may go), `build.rs`, `dev_cards.rs`, `robber.rs`, `volcano.rs` (volcanoes and gold), `trade.rs` (harbours, bank trades, offers), `scoring.rs` (points, awards, winning), `clock.rs` and `timeout.rs` (the countdowns, and `Game::tick` firing one), `player.rs`, `view.rs` (`Game::view`: what one seat sees). The unit and random-play tests are in `src/game/tests/`, in groups by topic. |
 | `src/board.rs` | `Board::from_def` deals a map's random parts (terrain, tokens, harbours, volcano spots) and builds the hex, corner and side geometry (`Geometry::build`) and the harbours and bridge sites. A bad map is a `MapError`, never a panic or a hang. |
 | `src/board_wire.rs` | The short form a board goes over the wire in, and the test that keeps the browser's corner and side numbering true to the server's. |
 | `src/types.rs` | The small types the rules are written in: `Resource`, `Res` (a bundle of cards), `DevCard`, `PlayerId`, `PerPlayer<T>`. They exist so a resource can't be mistaken for a hex or a seat number. |
@@ -50,7 +51,7 @@ is built per seat).
 | `src/validate.rs`, `src/validate/` | `validate`: every problem with a map in one pass, and the `validate` command. See [below](#map-validation). |
 | `maps/builtin`, `examples/maps` | The map files, and an example map. |
 
-Everything outside `game.rs` is small by comparison: the rules live in one place so that every action goes through one
+Everything outside `game/` is small by comparison: the rules live in one place so that every action goes through one
 check (`Game::apply`), and the lobby code only decides who may ask for what.
 
 ## A move, start to finish
@@ -121,7 +122,7 @@ the Open Sans font.
 |---|---|
 | `main.tsx`, `App.tsx`, `route.ts` | The screens (join, lobby, game) and the extra pages (`/changelog`, `/map-editor`). Moving between them doesn't reload the page, so the socket stays connected. The two extra pages are loaded on demand (`React.lazy`), so the map editor is not part of the download every player makes. |
 | `useGame.ts` | The connection: joins, keeps the seat's token, applies whole views and patches, asks for a resync when a patch doesn't fit. |
-| `types.ts` | The message and view types, mirroring the server (`PALETTE`, `DEFAULT_SETTINGS`, `Terrain`, the log events). Keep in step with `src/game.rs`. |
+| `types.ts` | The message and view types, mirroring the server (`PALETTE`, `DEFAULT_SETTINGS`, `Terrain`, the log events). Keep in step with `src/game/` (`view.rs`, `settings.rs`, `player.rs`). |
 | `boardGeometry.ts`, `patch.ts` | No React: the corner and side numbering, worked out from a board's hexes, and the patch applier (`LOG_WINDOW` must equal the server's). |
 | `Board.tsx`, `art.tsx`, `DesertArt.tsx` | The SVG board (hexes, tokens, harbours, pieces, robber, lava) and the shared vector art. |
 | `ui.tsx`, `Mobile.tsx` | The panels, dialogs, trade and log views; the phone layout (600 px and under). |
@@ -156,7 +157,8 @@ the Open Sans font.
 **A new hex type** (as volcano and gold were added). Search for `gold` to find every place a terrain is handled:
 - `src/board.rs`: the `Terrain` enum, its name and `resource()`, any predicate such as `gives_free_pick`, and how the
   deal treats its number (see `deal_layout`).
-- `src/game.rs`: what the hex does when its number is rolled, and its clock and phase if it needs one.
+- `src/game/`: what the hex does when its number is rolled (`volcano.rs`), and its clock and phase if it needs one
+  (`clock.rs`; `Phase` is in `game.rs`).
 - `src/log_event.rs` and `src/bot.rs` (the log event; `hex_value` and any pick the bot must make).
 - `src/validate/` if a map needs a new rule about it.
 - The client: `types.ts` (`Terrain`, the log event), `Board.tsx` (colour, art, `RES_OF`), `art.tsx`/`style.css`, `ui.tsx`
@@ -165,7 +167,7 @@ the Open Sans font.
 - The golden board test if geometry changed, then [Rules](Rules.md), [Maps](Maps.md), [Protocol](Protocol.md) and
   [Bots](Bots.md).
 
-**A new game setting.** Add the field to `Settings` and its default in `src/game.rs`, its range in `Settings::validate`
+**A new game setting.** Add the field to `Settings` and its default in `src/game/settings.rs`, its range in `Settings::validate`
 and its label in `Settings::changes`; mirror it in `DEFAULT_SETTINGS` (`types.ts`) and in `GameSettings.tsx`; use it in
 the rules; add it to the tables in [Rules](Rules.md#game-settings) and the `set_settings` list in
 [Protocol](Protocol.md#room-messages).

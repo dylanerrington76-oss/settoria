@@ -1,6 +1,6 @@
 # Rules
 
-This is how Settoria plays, as the server implements it (`src/game.rs`; the rules engine validates every action, so
+This is how Settoria plays, as the server implements it (`src/game/`; the rules engine validates every action, so
 what is written here is what is enforced). The rules are Catan's, plus a handful of Settoria's own: special hexes
 (volcano and gold), bridges, two trading rules aimed at fairness, and a chosen set of **game settings** the host can
 change in the lobby.
@@ -221,7 +221,7 @@ by what fits: players times starting settlements may not be more than 60 (twelve
 ## Game settings
 
 The host can change every rule in this table in the lobby. The server checks each value (`Settings::validate` in
-`src/game.rs`) and refuses anything outside its range. A map may also suggest a set of settings
+`src/game/settings.rs`) and refuses anything outside its range. A map may also suggest a set of settings
 (`recommended_settings`); the lobby shows what it would change and the host decides whether to apply it. The log
 opens a game with a line for everything that is not the standard value.
 

@@ -1,9 +1,9 @@
-import{j as e,l as i,r as c}from"./index-BN9o2eHI.js";const h=`### Changelog
+import{j as e,l as i,r as c}from"./index-CHc4ZhYW.js";const h=`### Changelog
 
 All notable changes to this project will be documented in this file.
 
 ### [v2026.11.25]
-- the game loads faster: its files are sent compressed and kept by the browser, and the map editor is only downloaded when you open it.
+HTTP optimizations
 
 ### [v2026.11.24]
 added new map Maritime Southeast Asia.
