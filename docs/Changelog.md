@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+### [v2026.11.25]
+- the game loads faster: its files are sent compressed and kept by the browser, and the map editor is only downloaded when you open it.
+
 ### [v2026.11.24]
 added new map Maritime Southeast Asia.
 

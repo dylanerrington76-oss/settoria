@@ -969,13 +969,6 @@ mod tests {
         assert!(layouts.windows(2).all(|w| w[0] == w[1]));
     }
 
-    // What USA is supposed to be, written down here and not read from `maps/builtin/usa.json`.
-    /// USA has 143 producing hexes: how many of each terrain (plus one desert, dealt anywhere).
-    const USA_TERRAINS: [(Terrain, usize); 5] =
-        [(Terrain::Hills, 29), (Terrain::Forest, 29), (Terrain::Pasture, 29), (Terrain::Fields, 28), (Terrain::Mountains, 28)];
-    /// How many tokens of each number USA has (the standard mix scaled up to 143 tokens).
-    const USA_TOKENS: [(u8, usize); 10] = [(2, 8), (3, 16), (4, 16), (5, 15), (6, 16), (8, 16), (9, 16), (10, 16), (11, 16), (12, 8)];
-
     #[test]
     fn usa_desert_is_dealt_anywhere() {
         let mut seen = std::collections::BTreeSet::new();

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/precompress.mjs",
+    "precompress": "node scripts/precompress.mjs",
     "typecheck": "tsc --noEmit",
     "shots": "node scripts/shoot.mjs",
     "test": "node scripts/ui-test.mjs"

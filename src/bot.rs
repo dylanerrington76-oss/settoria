@@ -638,10 +638,9 @@ pub fn choose<R: Rng>(g: &Game, me: PlayerId, acted: u32, rng: &mut R) -> Option
     }
 }
 
-/// The names bots are given. A table seats at most 12 and the host is always a person, so there are always enough
-/// (at most 11 bots).
+/// The names bots are given
 pub const NAMES: [&str; 12] = [
-    "Bender", "C-3PO", "Multivac", "Skynet", "AM", "Hal 9000", "Data", "GLaDOS", "Marvin", "WOPR", "Johnny 5", "Bishop",
+    "Bender", "C-3PO", "Multivac", "Skynet", "AM", "Hal 9000", "Data", "GLaDOS", "Marvin", "WOPR", "K", "Walter One",
 ];
 
 /// A name for a new bot: drawn at random from `NAMES`, leaving out every name in `taken` (the names at the table

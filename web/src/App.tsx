@@ -1,10 +1,8 @@
-import { DragEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { DragEvent, FormEvent, ReactNode, Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { ActionIcon, Avatar, Chevron, DieFace, ToolIcon } from './art';
 import Board from './Board';
 import type { MapZoomApi, ZoomEdge } from './mapZoom';
-import Changelog from './Changelog';
 import Footer from './Footer';
-import MapEditor from './MapEditor';
 import { MobileTable, useIsPhone } from './Mobile';
 import { MAX_FILES_AT_ONCE, UploadResult, uploadMapFile } from './mapUpload';
 import { formatPostgame, postgamePercent } from './postgame';
@@ -57,6 +55,18 @@ import {
   total,
 } from './types';
 
+// The two extra pages are only ever opened from a link in the footer, so each is its own file that the browser fetches
+// when that page is first shown, instead of every player downloading the map editor along with the game.
+const Changelog = lazy(() => import('./Changelog'));
+const MapEditor = lazy(() => import('./MapEditor'));
+
+/** What shows for the moment it takes to fetch one of those pages. */
+const PageLoading = () => (
+  <div className="centered">
+    <p className="muted">Loading…</p>
+  </div>
+);
+
 type Send = (msg: object) => void;
 type BuildMode = 'road' | 'bridge' | 'settlement' | 'city' | null;
 type Dialog = null | 'trade' | 'plenty' | 'monopoly' | 'rules' | 'info' | 'settings';
@@ -66,8 +76,20 @@ export default function App() {
   const { changelog, editor, go } = useRoute();
 
   // The game connection above stays open while the changelog is showing, so going back finds the lobby as it was.
-  if (changelog) return <Changelog onBack={() => go('app')} />;
-  if (editor) return <MapEditor onBack={() => go('app')} />;
+  if (changelog) {
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <Changelog onBack={() => go('app')} />
+      </Suspense>
+    );
+  }
+  if (editor) {
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <MapEditor onBack={() => go('app')} />
+      </Suspense>
+    );
+  }
 
   let body;
   if (screen.kind === 'game') {

@@ -4602,6 +4602,8 @@ mod tests {
             largest_army_min: rng.gen_range(1..=5),
             starting_settlements: start,
             bank_ratio: rng.gen_range(1..=5),
+            // `play_random` drives a turn-based game, so these random-rules games stay turn-based.
+            speed: false,
         };
         s.validate().unwrap();
         s

@@ -19,7 +19,8 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         DefaultBodyLimit, State,
     },
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    middleware,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -782,14 +783,63 @@ fn lan_ip() -> Option<String> {
     Some(s.local_addr().ok()?.ip().to_string())
 }
 
+/// What the browser may keep of a file in `/assets`. Vite names each of those after a hash of its contents, so a
+/// name never changes meaning: a year is as good as forever, and `immutable` stops the browser asking again.
+const HASHED_ASSET_CACHE: &str = "public, max-age=31536000, immutable";
+
+/// What the browser may keep of `index.html` and the other files outside `/assets` (the favicon). `no-cache` is "ask
+/// first": the browser keeps a copy but checks it is current on every use, which costs a small `304` when it is. That
+/// matters for `index.html`, which names this build's hashed files, so a new build must be seen at once.
+const PAGE_CACHE: &str = "no-cache";
+
+/// Give a good answer from the static files a cache policy, and say that its encoding depends on what the browser
+/// accepts (`Vary`), so a shared cache doesn't hand a brotli body to a client that can't read it. An error (a missing
+/// file, say) is left alone: it must not be remembered for a year.
+fn with_cache_policy(mut res: Response, policy: &'static str) -> Response {
+    if res.status().is_success() || res.status() == StatusCode::NOT_MODIFIED {
+        let headers = res.headers_mut();
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(policy));
+        headers.entry(header::VARY).or_insert(HeaderValue::from_static("accept-encoding"));
+    }
+    res
+}
+
+async fn hashed_asset_headers(res: Response) -> Response {
+    with_cache_policy(res, HASHED_ASSET_CACHE)
+}
+
+async fn page_headers(res: Response) -> Response {
+    with_cache_policy(res, PAGE_CACHE)
+}
+
 /// Every route the server has, serving the frontend from `static_dir` for anything else.
+///
+/// The files are sent as the build left them: `npm run build` writes a `.br` and a `.gz` beside every text file
+/// (`web/scripts/precompress.mjs`), and the server sends whichever one the browser accepts, brotli first. A file with
+/// no compressed copy (the fonts, the images) is sent as it is, and so is everything if the build didn't compress.
 fn router(room: Shared, static_dir: &str) -> Router {
+    // `/assets` is only ever hashed files, so a name that isn't there is a plain 404, not the page: the browser must not
+    // be given HTML where it asked for a script.
+    let assets = Router::new()
+        .fallback_service(ServeDir::new(format!("{static_dir}/assets")).precompressed_br().precompressed_gzip())
+        .layer(middleware::map_response(hashed_asset_headers));
+    // Anything else is a file of the build (`index.html`, the favicon) or one of the app's own addresses
+    // (`/changelog`, `/map-editor`), which `index.html` answers.
+    let pages = Router::new()
+        .fallback_service(
+            ServeDir::new(static_dir)
+                .precompressed_br()
+                .precompressed_gzip()
+                .fallback(ServeFile::new(format!("{static_dir}/index.html")).precompressed_br().precompressed_gzip()),
+        )
+        .layer(middleware::map_response(page_headers));
     Router::new()
         .route("/ws", get(ws_handler))
         .route("/api/lobby", get(lobby_info))
         // A map is small, so this route takes far less than axum's 2 MB default.
         .route("/api/maps", post(upload_map).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)))
-        .fallback_service(ServeDir::new(static_dir).fallback(ServeFile::new(format!("{static_dir}/index.html"))))
+        .nest_service("/assets", assets)
+        .fallback_service(pages)
         .with_state(room)
 }
 

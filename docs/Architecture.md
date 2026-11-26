@@ -35,7 +35,7 @@ is built per seat).
 
 | File | What it holds |
 |---|---|
-| `src/main.rs` | The `Room` (seats, host choices, the game, the bots) behind a single `Mutex`; the WebSocket handler; the lobby and game messages; `update_seat` (whole views or patches); `GET /api/lobby`, `POST /api/maps`; static file serving; the 200 ms timer loop; startup and the `validate` subcommand. |
+| `src/main.rs` | The `Room` (seats, host choices, the game, the bots) behind a single `Mutex`; the WebSocket handler; the lobby and game messages; `update_seat` (whole views or patches); `GET /api/lobby`, `POST /api/maps`; static file serving (the `.br` and `.gz` copies the build writes, and cache headers: `immutable` for `/assets`, `no-cache` for `index.html`); the 200 ms timer loop; startup and the `validate` subcommand. |
 | `src/game.rs` | **All the rules and clocks.** `Settings`, `Action`, `Game::apply` (validates and carries out every action), `Game::tick` (fires a timeout), `Game::view` (what one seat sees), the volcano and trade rules, plus the unit and random-play tests. The biggest file by far. |
 | `src/board.rs` | `Board::from_def` deals a map's random parts (terrain, tokens, harbours, volcano spots) and builds the hex, corner and side geometry (`Geometry::build`) and the harbours and bridge sites. A bad map is a `MapError`, never a panic or a hang. |
 | `src/board_wire.rs` | The short form a board goes over the wire in, and the test that keeps the browser's corner and side numbering true to the server's. |
@@ -119,7 +119,7 @@ the Open Sans font.
 
 | File | What it holds |
 |---|---|
-| `main.tsx`, `App.tsx`, `route.ts` | The screens (join, lobby, game) and the extra pages (`/changelog`, `/map-editor`). Moving between them doesn't reload the page, so the socket stays connected. |
+| `main.tsx`, `App.tsx`, `route.ts` | The screens (join, lobby, game) and the extra pages (`/changelog`, `/map-editor`). Moving between them doesn't reload the page, so the socket stays connected. The two extra pages are loaded on demand (`React.lazy`), so the map editor is not part of the download every player makes. |
 | `useGame.ts` | The connection: joins, keeps the seat's token, applies whole views and patches, asks for a resync when a patch doesn't fit. |
 | `types.ts` | The message and view types, mirroring the server (`PALETTE`, `DEFAULT_SETTINGS`, `Terrain`, the log events). Keep in step with `src/game.rs`. |
 | `boardGeometry.ts`, `patch.ts` | No React: the corner and side numbering, worked out from a board's hexes, and the patch applier (`LOG_WINDOW` must equal the server's). |

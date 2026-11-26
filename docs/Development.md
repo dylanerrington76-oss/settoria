@@ -41,7 +41,8 @@ all interfaces, so people on the same network can join. Check a map without star
     npm install                  # once
     npm run dev                  # hot-reloading client on http://localhost:5173
     npm run typecheck            # tsc --noEmit
-    npm run build                # typecheck, then build into web/dist
+    npm run build                # typecheck, build into web/dist, then write a .br and .gz copy of each text file
+    npm run precompress          # only that last step, on the web/dist that is already there
 
 `npm run dev` proxies `/ws` and `/api` to the Rust server, so start that first (`cargo run --release`). It looks for the
 server on `localhost:3000`; set `API_TARGET` (for example `API_TARGET=other-host:3000`) to point it elsewhere. The
@@ -137,5 +138,8 @@ Developer notes belong in these docs, not in the changelog.
 2. Add an entry to `docs/Changelog.md`.
 3. `cargo test --release`, `cd web && npm test`, and the two Node tests above.
 4. `cd web && npm run build` to refresh `web/dist`, because the prebuilt client is what `cargo run` serves. (Docker builds
-   its own.)
+   its own.) The build leaves a `.br` and a `.gz` beside the `.js`, `.css` and `.html` files, and those belong in the
+   commit with the rest of `web/dist`: the server sends them to browsers that accept them. A `web/dist` without them
+   still works; everything is just sent uncompressed. To check, `curl -sI -H 'Accept-Encoding: br' localhost:3000/assets/<the .js file>`
+   should show `content-encoding: br` and `cache-control: public, max-age=31536000, immutable`.
 5. Optionally, run the server and `node scripts/smoke.mjs`, and then `docker compose up --build` to check the image.
