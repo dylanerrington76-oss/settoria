@@ -1,6 +1,5 @@
 // Renders real components to HTML in Node (no browser) and checks what the person would read.
 //
-//   npm test
 //
 // The components are bundled with Vite's server-side build, so this uses nothing that isn't already a
 // dependency of the app. It checks the text and the enabled/disabled state of what is rendered; clicking is
@@ -48,7 +47,7 @@ const MAPS = [
   info('trio', 'Trio', 3, 4, { builtin: false }),
   info('duo', 'Duo', 2, 2, { builtin: false }),
 ];
-const people = (n) => ['Ada', 'Bo', 'Cy', 'Di'].slice(0, n).map((name, i) => ({ name, color: ['#FE5100', '#613393', '#FFB81C', '#69BE28'][i], connected: true }));
+const people = (n) => ['Ada', 'Bo', 'Cy', 'Di'].slice(0, n).map((name, i) => ({ name, color: ['#FE5100', '#613393', '#FFCD00', '#69BE28'][i], connected: true }));
 
 function lobby(over = {}) {
   const sent = [];
@@ -136,9 +135,9 @@ test('a guest sees no Start button at all', () => {
   assert.ok(html.includes('Waiting for Ada to start'));
 });
 
-// ---------------------------------------------------------------- bots in the lobby
+//bots in the lobby
 
-const COLORS = ['#FE5100', '#613393', '#FFB81C', '#69BE28', '#0033A0', '#CC0000', '#7BAFD4', '#FFFFFF'];
+const COLORS = ['#FE5100', '#613393', '#FFCD00', '#69BE28', '#0033A0', '#CC0000', '#7BAFD4', '#FFFFFF'];
 const withBots = (humans, bots) => [
   ...people(humans),
   ...Array.from({ length: bots }, (_, i) => ({ name: `Bot ${i + 1}`, color: COLORS[humans + i], connected: true, bot: true })),

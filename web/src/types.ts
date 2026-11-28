@@ -38,7 +38,7 @@ export const MAX_PLAYERS = 12;
 export const PALETTE = [
   { name: 'Orange', hex: '#FE5100' },
   { name: 'Purple', hex: '#613393' },
-  { name: 'Gold', hex: '#FFB81C' },
+  { name: 'Gold', hex: '#FFCD00' },
   { name: 'Green', hex: '#69BE28' },
   { name: 'Blue', hex: '#0033A0' },
   { name: 'Red', hex: '#CC0000' },

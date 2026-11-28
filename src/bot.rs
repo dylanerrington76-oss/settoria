@@ -699,9 +699,9 @@ pub fn choose<R: Rng>(g: &Game, me: PlayerId, acted: u32, rng: &mut R) -> Option
     }
 }
 
-/// The names bots are given
+/// bot names
 pub const NAMES: [&str; 12] = [
-    "Bender", "C-3PO", "Multivac", "Skynet", "AM", "Hal 9000", "Data", "GLaDOS", "Marvin", "WOPR", "K", "Walter One",
+    "Bender", "C-3PO", "Multivac", "Skynet", "AM", "Hal 9000", "Data", "GLaDOS", "Marvin", "WOPR", "Josef K", "Walter One",
 ];
 
 /// A name for a new bot: drawn at random from `NAMES`, leaving out every name in `taken` (the names at the table

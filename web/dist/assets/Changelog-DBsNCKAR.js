@@ -1,4 +1,4 @@
-import{j as e,l as i,r as c}from"./index-Cu5LdPSE.js";const g=`### Changelog
+import{j as e,l as i,r as c}from"./index-BGbjo42F.js";const g=`### Changelog
 
 All notable changes to this project will be documented in this file.
 

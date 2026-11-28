@@ -7,7 +7,7 @@ use serde::Serialize;
 pub const PALETTE: [&str; 12] = [
     "#FE5100", // orange
     "#613393", // purple
-    "#FFB81C", // gold
+    "#FFCD00", // gold
     "#69BE28", // green
     "#0033A0", // blue
     "#CC0000", // red
