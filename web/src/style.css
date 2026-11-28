@@ -108,6 +108,10 @@ label { display: block; margin: 14px 0 4px; color: var(--mute); font-size: 13px;
 .lobby-rules { grid-area: rules; min-width: 0; max-height: min(82vh, 780px); overflow-y: auto; padding-right: 10px; margin-right: -10px; }
 .game-settings { border: 0; padding: 0; margin: 0; min-width: 0; }
 .game-settings legend { padding: 0; font-size: 22px; font-weight: 700; color: var(--ink); }
+/* phones only: the title of the rules is a button that folds the list away (see GameSettingsPanel) */
+.gs-toggle { display: flex; align-items: center; gap: 10px; width: auto; padding: 2px 0; border: 0; border-radius: 6px; background: none; box-shadow: none; color: inherit; font: inherit; font-size: 22px; font-weight: 700; text-align: left; }
+.gs-chev { width: 9px; height: 9px; border: solid currentColor; border-width: 0 3px 3px 0; transform: rotate(-45deg); transition: transform 0.15s; }
+.gs-toggle.open .gs-chev { transform: rotate(45deg) translate(-2px, -2px); }
 .gs-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 2px 0 4px; font-size: 13px; }
 .gs-group h3 { margin: 16px 0 2px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .srow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 190px); gap: 4px 14px; align-items: start; padding: 9px 0 9px 10px; border-bottom: 1px solid rgba(189, 179, 157, 0.45); border-left: 3px solid transparent; }
@@ -451,7 +455,7 @@ button.stack:disabled { opacity: 1; cursor: default; }
 .final { border-left: 6px solid var(--line); background: rgba(255, 255, 255, 0.6); border-radius: 8px; padding: 8px 14px; display: grid; gap: 6px; }
 .final-row { display: flex; align-items: center; gap: 10px; }
 .final-row span { flex: 1; }
-.modal:has(.final-table) { width: min(700px, 100%); }
+.modal:has(.final-table) { width: min(820px, 100%); }
 .final-scroll { overflow-x: auto; }
 .final-tabs { margin: 0 0 14px; }
 .final-panels { display: grid; }

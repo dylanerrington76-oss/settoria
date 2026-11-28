@@ -339,3 +339,13 @@ shown as *Game mode*). The rules above all apply, except for these:
   100%. The code is in `web/src/postgame.ts`; the live bar uses the same formula with the income so far.
 - The end-game **Stats** tab also shows development cards bought, completed player trades, and where every player's points
   came from (hidden Victory Point cards are revealed there).
+- **Robber+** is the cards a player took from others with the robber (a 7 or a Knight); **Robber-** is the cards taken
+  from them. **Dice-** is the cards a player discarded after a 7 for holding more than the discard limit.
+- **Blocked** is the cards the robber kept a player's hexes from paying on a roll: a settlement on the hex would have
+  paid 1, a city 2, and a volcano or gold field under the robber counts the picks it would have given. (A bank that
+  ran short is not counted.)
+- **Luck** is dice income minus the income the roll probabilities expected, in cards. On every roll a producing hex
+  with number `n` is expected to pay `ways(n) / 36` of a card per settlement (twice that per city), where `ways(n)` is
+  how many of the 36 throws of two dice add up to `n`. Every roll counts, so a 7 costs everyone with buildings some luck.
+  Hexes under the robber are left out of what was expected (their loss is shown as Blocked, not twice), and a roll named
+  with the Alchemist counts for nothing, since its player chose it. Over a whole game luck averages out to about zero.

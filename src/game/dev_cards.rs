@@ -149,6 +149,8 @@ impl Game {
         }
         self.use_dev(p, DevCard::Alchemist);
         self.log(LogEvent::PlayedAlchemist { player: p });
+        // The owner chose these dice, so the roll is neither lucky nor unlucky for anyone.
+        self.luck_counts = false;
         self.roll_dice_as(dice);
         Ok(())
     }

@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
-import { Glyph, PieceShape, PortLabel, isVeryDark, pieceEdge, shade } from './art';
+import { Glyph, PieceShadow, PieceShape, PortLabel, SHADOW_DY, SHADOW_OPACITY, isVeryDark, pieceEdge, shade } from './art';
 import { DesertArt, DesertDefs, DesertRobberShade } from './DesertArt';
 import { useMapZoom } from './mapZoom';
 import type { MapZoomApi, ZoomEdge } from './mapZoom';
@@ -45,26 +45,21 @@ export function hexCorner(cx: number, cy: number, r: number, i: number): [number
 /**
  * The volcano drawn on a hex: a cone with a glowing crater and lava runs, then the numbers 1 to 6 on the
  * corners the lava can flow down to (corner `i` of the hex is number `i + 1`). Centred on the hex at (cx, cy),
- * at the board's scale (`S` per hex radius). `lift` adds the board's drop shadow, which only exists in the
- * board's own `<defs>`.
+ * at the board's scale (`S` per hex radius). `lift` adds a flat, translucent
+ * shadow copy of the cone underneath it.
  */
 export function VolcanoArt({ cx, cy, cone = true, numbers = true, lift = true, scale = S }: { cx: number; cy: number; cone?: boolean; numbers?: boolean; lift?: boolean; scale?: number }) {
   const u = scale;
   const top = cy - 0.43 * u;
   const base = cy + 0.02 * u;
   const r = (v: number) => v.toFixed(1);
+  const coneD = `M${r(cx - 0.56 * u)},${r(base)} L${r(cx - 0.17 * u)},${r(top)} L${r(cx + 0.17 * u)},${r(top)} L${r(cx + 0.56 * u)},${r(base)} Z`;
   return (
     <g>
       {cone && (
         <>
-      <path
-        d={`M${r(cx - 0.56 * u)},${r(base)} L${r(cx - 0.17 * u)},${r(top)} L${r(cx + 0.17 * u)},${r(top)} L${r(cx + 0.56 * u)},${r(base)} Z`}
-        fill="#7a665f"
-        stroke="#2f2421"
-        strokeWidth="1.6"
-        strokeLinejoin="round"
-        filter={lift ? 'url(#lift)' : undefined}
-      />
+      {lift && <path d={coneD} transform={`translate(0 ${SHADOW_DY})`} fill="#000" fillOpacity={SHADOW_OPACITY} />}
+      <path d={coneD} fill="#7a665f" stroke="#2f2421" strokeWidth="1.6" strokeLinejoin="round" />
       <path d={`M${r(cx + 0.17 * u)},${r(top)} L${r(cx + 0.56 * u)},${r(base)} L${r(cx + 0.1 * u)},${r(base)} Z`} fill="#5a4943" opacity=".7" />
       <ellipse cx={cx} cy={top} rx={0.17 * u} ry={0.06 * u} fill="#ffb02e" stroke="#2f2421" strokeWidth="1.4" />
       <ellipse cx={cx} cy={top - 0.004 * u} rx={0.1 * u} ry={0.03 * u} fill="#fff2a8" />
@@ -89,7 +84,15 @@ export function VolcanoArt({ cx, cy, cone = true, numbers = true, lift = true, s
 }
 
 /** One gold bar, centred on (0, 0) and 28 wide: a pale top face over an orange front, with a bright edge between. */
-function GoldBar({ x, y, rot = 0, k = 1 }: { x: number; y: number; rot?: number; k?: number }) {
+function GoldBar({ x, y, rot = 0, k = 1, shadow = false }: { x: number; y: number; rot?: number; k?: number; shadow?: boolean }) {
+  if (shadow) {
+    // just the outline of the two faces, in black: the bar's shadow
+    return (
+      <g transform={`translate(${x} ${y}) rotate(${rot}) scale(${k})`}>
+        <path d="M-14,1 L14,1 L15.5,9 L-15.5,9 Z M-9.5,-8 L9.5,-8 L14,1 L-14,1 Z" fill="#000" />
+      </g>
+    );
+  }
   return (
     <g transform={`translate(${x} ${y}) rotate(${rot}) scale(${k})`} strokeLinejoin="round" strokeLinecap="round">
       <path d="M-14,1 L14,1 L15.5,9 L-15.5,9 Z" fill="#f09a1a" stroke="#b5681a" strokeWidth="1.5" />
@@ -103,8 +106,8 @@ function GoldBar({ x, y, rot = 0, k = 1 }: { x: number; y: number; rot?: number;
 
 /**
  * The gold field drawn on a hex: a small pile of gold bars above the number token, with a few orange pebbles
- * either side. Centred on the hex at (cx, cy), at the board's scale (`S` per hex radius). `lift` adds the
- * board's drop shadow, which only exists in the board's own `<defs>`.
+ * either side. Centred on the hex at (cx, cy), at the board's scale (`S` per hex radius). `lift` adds a flat,
+ * translucent shadow copy of the bars underneath them.
  */
 export function GoldArt({ cx, cy, lift = true, scale = S }: { cx: number; cy: number; lift?: boolean; scale?: number }) {
   return (
@@ -117,7 +120,14 @@ export function GoldArt({ cx, cy, lift = true, scale = S }: { cx: number; cy: nu
         <ellipse cx={41} cy={-14.5} rx="3.8" ry="2.4" />
         <ellipse cx={31} cy={-14} rx="3" ry="2" />
       </g>
-      <g filter={lift ? 'url(#lift)' : undefined}>
+      {lift && (
+        <g transform={`translate(0 ${SHADOW_DY})`} fillOpacity={SHADOW_OPACITY}>
+          <GoldBar x={-15} y={-22} rot={-7} k={0.84} shadow />
+          <GoldBar x={11} y={-26} rot={-30} k={0.96} shadow />
+          <GoldBar x={-3} y={-14} rot={-2} k={0.84} shadow />
+        </g>
+      )}
+      <g>
         <GoldBar x={-15} y={-22} rot={-7} k={0.84} />
         <GoldBar x={11} y={-26} rot={-30} k={0.96} />
         <GoldBar x={-3} y={-14} rot={-2} k={0.84} />
@@ -290,6 +300,70 @@ function useStableBoard(next: BoardData): BoardData {
   return ref.current;
 }
 
+/** How the coast wobbles: the noise's wavelength is 1 / `WAVE_FREQ` board units, a point moves by at most `WAVE_AMP`, and a hex side is cut in `WAVE_STEPS` pieces so the wobble is followed. */
+const WAVE_FREQ = 0.035;
+const WAVE_AMP = 4.5;
+const WAVE_STEPS = 8;
+
+/** A pseudo-random number in [0, 1) for a lattice point; the same point always gives the same number. */
+function lattice(ix: number, iy: number, seed: number): number {
+  let h = Math.imul(ix, 374761393) + Math.imul(iy, 668265263) + Math.imul(seed, 1442695041);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+/** Smooth 2D value noise in [0, 1]. */
+function valueNoise(x: number, y: number, seed: number): number {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = x - ix;
+  const fy = y - iy;
+  const u = fx * fx * (3 - 2 * fx);
+  const v = fy * fy * (3 - 2 * fy);
+  const a = lattice(ix, iy, seed);
+  const b = lattice(ix + 1, iy, seed);
+  const c = lattice(ix, iy + 1, seed);
+  const d = lattice(ix + 1, iy + 1, seed);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
+/** Two octaves of noise, as the old `feTurbulence` filter had, in [-1, 1]. */
+const fractal = (x: number, y: number, seed: number): number =>
+  ((valueNoise(x * WAVE_FREQ, y * WAVE_FREQ, seed) + 0.5 * valueNoise(x * WAVE_FREQ * 2, y * WAVE_FREQ * 2, seed + 101)) / 1.5 - 0.5) * 2;
+
+/**
+ * The wavy coast, worked out once: every hex side that has a hex on one side only (a side between two hexes is inland, and
+ * is hidden under the beach), cut into short pieces whose points are each moved by smooth noise that depends only on where
+ * the point is. So two sides meeting at a corner move that corner together and the line stays whole. The two shallow-water
+ * layers are strokes along this one path, with no filter to run when the board is drawn.
+ */
+function wavyCoast(board: BoardData): string {
+  const sides = new Map<string, { n: number; a: [number, number]; b: [number, number] }>();
+  const k = (p: [number, number]) => `${Math.round(p[0] * 10)},${Math.round(p[1] * 10)}`;
+  for (const hx of board.hexes) {
+    const c = [0, 1, 2, 3, 4, 5].map((i) => hexCorner(hx.x * S, hx.y * S, S, i));
+    for (let i = 0; i < 6; i++) {
+      const a = c[i];
+      const b = c[(i + 1) % 6];
+      const key = k(a) < k(b) ? `${k(a)}|${k(b)}` : `${k(b)}|${k(a)}`;
+      const side = sides.get(key);
+      if (side) side.n++;
+      else sides.set(key, { n: 1, a, b });
+    }
+  }
+  const at = (x: number, y: number) => `${(x + fractal(x, y, 7) * WAVE_AMP).toFixed(1)},${(y + fractal(x, y, 23) * WAVE_AMP).toFixed(1)}`;
+  let d = '';
+  for (const { n, a, b } of sides.values()) {
+    if (n > 1) continue;
+    for (let j = 0; j <= WAVE_STEPS; j++) {
+      const t = j / WAVE_STEPS;
+      d += `${j === 0 ? 'M' : 'L'}${at(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)}`;
+    }
+  }
+  return d;
+}
+
 /** Everything derived from the board alone, so it is worked out once per game rather than per message. */
 function computeGeometry(board: BoardData) {
   const ports = board.ports.map((p) => ({ p, ...portLayout(board, p) }));
@@ -307,6 +381,9 @@ function computeGeometry(board: BoardData) {
   // Every hex outline as one path (one closed sub-path per hex). The four shoreline layers are each a single solid
   // colour, so one <path> per layer looks exactly like one <polygon> per hex per layer, with far fewer elements.
   const shore = land.map((pts) => `M${pts.split(' ').join('L')}Z`).join('');
+  // The wavy coast the two shallow-water layers follow, and the shadow under every tile's border: one path each.
+  const wave = wavyCoast(board);
+  const tileShadow = board.hexes.map((hx) => `M${hexPoints(hx.x * S, hx.y * S + SHADOW_DY, S * 0.935).split(' ').join('L')}Z`).join('');
 
   // A faint hex grid across the open sea, if the map's file asks for one (`style.sea_grid`).
   const sea: string[] = [];
@@ -320,7 +397,7 @@ function computeGeometry(board: BoardData) {
       for (let q = q0; q <= q1; q++) sea.push(hexPoints(w * (q + r / 2), 1.5 * S * r, S));
     }
   }
-  return { ports, box, shore, sea };
+  return { ports, box, shore, wave, tileShadow, sea };
 }
 type Geometry = ReturnType<typeof computeGeometry>;
 
@@ -370,7 +447,7 @@ const targetGrow = (scale: number): number => Math.min(MAX_TARGET_GROW, Math.max
  * references (gradients, filters) is defined here; the pieces drawn over it have their own `<defs>`.
  */
 const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board: BoardData; geo: Geometry; showPips: boolean }) {
-  const { ports, shore, sea } = geo;
+  const { ports, shore, wave, tileShadow, sea } = geo;
   return (
     <>
       <defs>
@@ -381,13 +458,12 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
           </radialGradient>
         ))}
         <DesertDefs uid="bd" scale={S} />
-        <filter id="wavy" x="-5%" y="-5%" width="110%" height="110%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="n" />
-          <feDisplacementMap in="SourceGraphic" in2="n" scale="9" />
-        </filter>
-        <filter id="lift" x="-30%" y="-30%" width="160%" height="160%">
-          <feDropShadow dx="0" dy="1.6" stdDeviation="1.5" floodColor="#000" floodOpacity="0.35" />
-        </filter>
+        {/* black copies of the resource symbols: drawn translucent and a little lower, they are the symbols' shadows */}
+        {[0, 1, 2, 3, 4].map((r) => (
+          <g key={r} id={`gs-${r}`}>
+            <Glyph res={r} fill="#000" fill2="#000" silhouette />
+          </g>
+        ))}
         <linearGradient id="sail" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#ffffff" />
           <stop offset="0.7" stopColor="#f4f4f2" />
@@ -408,10 +484,8 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
       )}
 
       {/* shoreline: shallow water, foam, pale beach, sand */}
-      <g filter="url(#wavy)">
-        <path d={shore} fill="#3a93c8" stroke="#3a93c8" strokeWidth={47} strokeLinejoin="round" />
-        <path d={shore} fill="#86d4f8" stroke="#86d4f8" strokeWidth={38} strokeLinejoin="round" />
-      </g>
+      <path d={wave} fill="none" stroke="#3a93c8" strokeWidth={47} strokeLinecap="round" strokeLinejoin="round" />
+      <path d={wave} fill="none" stroke="#86d4f8" strokeWidth={38} strokeLinecap="round" strokeLinejoin="round" />
       <path d={shore} fill="#f4ebc6" stroke="#f4ebc6" strokeWidth={27} strokeLinejoin="round" />
       <path d={shore} fill="#e3b86a" stroke="#e3b86a" strokeWidth={15} strokeLinejoin="round" />
 
@@ -453,6 +527,9 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
         </g>
       ))}
 
+      {/* the shadow under every tile, as one flat translucent path (so it never doubles up where tiles touch) */}
+      <path d={tileShadow} fill="#000" fillOpacity={SHADOW_OPACITY} />
+
       {/* land tiles */}
       {board.hexes.map((h, i) => {
         const cx = h.x * S;
@@ -465,9 +542,7 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
         const ty = cy + 0.31 * S;
         return (
           <g key={i}>
-            <g filter="url(#lift)">
-              <polygon points={hexPoints(cx, cy, S * 0.935)} fill={st.border} />
-            </g>
+            <polygon points={hexPoints(cx, cy, S * 0.935)} fill={st.border} />
             <polygon points={hexPoints(cx, cy, S * 0.885)} fill={`url(#g-${h.terrain})`} />
             {h.terrain === 'desert' && <DesertArt cx={cx} cy={cy} uid="bd" scale={S} />}
             <polygon points={hexPoints(cx, cy, S * 0.845)} fill="none" stroke={st.hi} strokeWidth={1.6} opacity={0.75} />
@@ -496,16 +571,20 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
 
             {/* terrain symbol */}
             {res !== null && (
-              <g transform={`translate(${cx} ${cy - 0.5 * S}) scale(${[1.0, 1.0, 1.12, 1.08, 1.15][res]}) translate(-20 -18)`} filter="url(#lift)">
-                <Glyph res={res} fill={art.fill} fill2={art.fill2} stroke={art.stroke} />
-              </g>
+              <>
+                <use href={`#gs-${res}`} transform={`translate(${cx} ${cy - 0.5 * S + SHADOW_DY}) scale(${[1.0, 1.0, 1.12, 1.08, 1.15][res]}) translate(-20 -18)`} fillOpacity={SHADOW_OPACITY} strokeOpacity={SHADOW_OPACITY} />
+                <g transform={`translate(${cx} ${cy - 0.5 * S}) scale(${[1.0, 1.0, 1.12, 1.08, 1.15][res]}) translate(-20 -18)`}>
+                  <Glyph res={res} fill={art.fill} fill2={art.fill2} stroke={art.stroke} />
+                </g>
+              </>
             )}
             {h.terrain === 'volcano' && <VolcanoArt cx={cx} cy={cy} numbers={false} />}
             {h.terrain === 'gold' && <GoldArt cx={cx} cy={cy} />}
 
             {/* number token */}
             {h.number !== null && (
-              <g filter="url(#lift)">
+              <g>
+                <rect x={cx - 21} y={ty - 20 + SHADOW_DY} width="42" height="40" rx="6.5" fill="#000" fillOpacity={SHADOW_OPACITY} />
                 <rect x={cx - 21} y={ty - 20} width="42" height="40" rx="6.5" fill="#eae9e5" />
                 <text
                   x={cx}
@@ -535,13 +614,10 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
   );
 });
 
-/** What the pieces drawn over the map reference: the shadow under buildings and the robber, the robber's shading, and the desert's shade under the robber. */
+/** What the pieces drawn over the map reference: the robber's shading, and the desert's shade under the robber. */
 function OverlayDefs() {
   return (
     <defs>
-      <filter id="drop" x="-40%" y="-40%" width="180%" height="190%">
-        <feDropShadow dx="0" dy="2.5" stdDeviation="1.8" floodColor="#000" floodOpacity="0.45" />
-      </filter>
       <radialGradient id="rob" cx="38%" cy="32%" r="75%">
         <stop offset="0" stopColor="#ececec" />
         <stop offset="1" stopColor="#a9a9a9" />
@@ -632,7 +708,8 @@ export default function Board({ view, vertexTargets, edgeTargets, hexTargets, sh
             const b = view.buildings[i];
             if (!b) return null;
             return (
-              <g key={i} transform={`translate(${v.x * S} ${v.y * S - 6}) scale(${b.city ? 1.12 : 1.22})`} filter="url(#drop)">
+              <g key={i} transform={`translate(${v.x * S} ${v.y * S - 6}) scale(${b.city ? 1.12 : 1.22})`}>
+                <PieceShadow city={b.city} />
                 <PieceShape color={view.players[b.owner].color} city={b.city} />
               </g>
             );
@@ -673,7 +750,13 @@ export default function Board({ view, vertexTargets, edgeTargets, hexTargets, sh
             return (
               <>
               {h.terrain === 'desert' && <DesertRobberShade x={h.x * S - 0.5 * S} y={h.y * S + 0.06 * S + 20} uid="bo" />}
-              <g transform={`translate(${h.x * S - 0.5 * S} ${h.y * S + 0.06 * S}) scale(1.18)`} className="robber" filter="url(#drop)">
+              <g transform={`translate(${h.x * S - 0.5 * S} ${h.y * S + 0.06 * S}) scale(1.18)`} className="robber">
+                <path
+                  d="M-14 14 C-16 4 -9 -2 0 -2 C9 -2 16 4 14 14 C10 19 -10 19 -14 14Z M-11 -11 A11 10.5 0 1 1 11 -11 A11 10.5 0 1 1 -11 -11Z"
+                  transform={`translate(0 ${SHADOW_DY})`}
+                  fill="#000"
+                  fillOpacity={SHADOW_OPACITY}
+                />
                 <ellipse cx="0" cy="17" rx="15" ry="5" fill="rgba(0,0,0,.25)" />
                 <path d="M-14 14 C-16 4 -9 -2 0 -2 C9 -2 16 4 14 14 C10 19 -10 19 -14 14Z" fill="url(#rob)" stroke="#7b7b7b" strokeWidth="1.8" strokeLinejoin="round" />
                 <ellipse cx="0" cy="-11" rx="11" ry="10.5" fill="url(#rob)" stroke="#7b7b7b" strokeWidth="1.8" />

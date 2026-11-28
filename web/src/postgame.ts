@@ -28,6 +28,13 @@ export function postgamePercent(diceIncome: number[]): number[] {
   return probs.map((p) => p / sum);
 }
 
+/** "+1.5", "−0.8" or "0.0": a player's Luck in cards, with its sign and one decimal (a true minus sign, not a hyphen). */
+export function formatLuck(cards: number): string {
+  const text = Math.abs(cards).toFixed(1);
+  if (Number(text) === 0) return '0.0';
+  return `${cards > 0 ? '+' : '−'}${text}`;
+}
+
 /** "54.7%": a fraction shown as a percentage with one decimal. */
 export function formatPostgame(fraction: number): string {
   return `${(fraction * 100).toFixed(1)}%`;

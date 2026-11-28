@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useIsPhone } from './Mobile';
 import { DEFAULT_SETTINGS, FRIENDLY_ROBBER_MAX_VP, type Settings } from './types';
 
 type NumKey = { [K in keyof Settings]: Settings[K] extends number ? K : never }[keyof Settings];
@@ -349,9 +350,24 @@ export function GameSettingsPanel({
   onReset: () => void;
 }) {
   const n = changedCount(settings);
+  // On a phone the list of rules is long, so it folds away behind its title (closed to start with); the summary line stays.
+  // Everywhere else it is always open and has no button.
+  const phone = useIsPhone();
+  const [open, setOpen] = useState(false);
+  const collapsed = phone && !open;
   return (
     <fieldset className="game-settings" disabled={!host}>
-      <legend>Game rules</legend>
+      <legend>
+        {phone ? (
+          // A button in the first legend of a disabled fieldset stays usable, so players who are not the host can still open it.
+          <button type="button" className={'gs-toggle' + (collapsed ? '' : ' open')} aria-expanded={!collapsed} aria-controls="gs-body" onClick={() => setOpen(!open)}>
+            <span>Game rules</span>
+            <span className="gs-chev" aria-hidden="true" />
+          </button>
+        ) : (
+          'Game rules'
+        )}
+      </legend>
       <div className="gs-head">
         <span className="muted">
           {n === 0 ? 'Standard rules' : plural(n, 'rule') + ' changed from standard'}
@@ -363,18 +379,20 @@ export function GameSettingsPanel({
           </button>
         )}
       </div>
-      {GROUPS.map((g) => (
-        <section key={g.title} className="gs-group" aria-label={g.title}>
-          <h3>{g.title}</h3>
-          {g.items.filter((sp) => visible(sp, settings)).map((sp) =>
-            sp.kind === 'num' ? (
-              <NumberRow key={sp.key} spec={sp} s={settings} onChange={onChange} />
-            ) : (
-              <ToggleRow key={sp.key} spec={sp} s={settings} onChange={onChange} />
-            ),
-          )}
-        </section>
-      ))}
+      <div id="gs-body" hidden={collapsed}>
+        {GROUPS.map((g) => (
+          <section key={g.title} className="gs-group" aria-label={g.title}>
+            <h3>{g.title}</h3>
+            {g.items.filter((sp) => visible(sp, settings)).map((sp) =>
+              sp.kind === 'num' ? (
+                <NumberRow key={sp.key} spec={sp} s={settings} onChange={onChange} />
+              ) : (
+                <ToggleRow key={sp.key} spec={sp} s={settings} onChange={onChange} />
+              ),
+            )}
+          </section>
+        ))}
+      </div>
     </fieldset>
   );
 }

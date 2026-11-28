@@ -23,6 +23,7 @@ impl Game {
             return Err("You don't have those cards".into());
         }
         self.pay(p, &cards);
+        self.players[p].stats.dice_discarded += need;
         self.discards.remove(idx);
         self.log(LogEvent::Discarded { player: p, count: need });
         if self.discards.is_empty() {
@@ -87,6 +88,8 @@ impl Game {
                 if k < hand[r] as u32 {
                     self.players[victim].hand[r] -= 1;
                     self.players[thief].hand[r] += 1;
+                    self.players[victim].stats.robber_lost += 1;
+                    self.players[thief].stats.robber_gained += 1;
                     break;
                 }
                 k -= hand[r] as u32;

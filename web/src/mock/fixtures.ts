@@ -232,18 +232,19 @@ export function fixture(name: string): { view: GameView; clock?: number } {
     const parts: [number, number, number, number, number][] = [
       [3, 4, 1, 0, 2], [2, 6, 0, 0, 0], [3, 4, 0, 0, 0], [2, 2, 0, 2, 0], // settlements, cities, dev cards, army, road
     ];
-    const stats: [number, number, number][] = [
-      [34, 3, 6], [27, 2, 4], [22, 1, 5], [18, 0, 2], // dice income, dev cards bought, trades
+    const stats: [number, number, number, number, number, number, number, number][] = [
+      [34, 3, 6, 3, 1, 4, 5, 2.4], [27, 2, 4, 1, 2, 0, 8, -1.3], [22, 1, 5, 0, 1, 6, 2, -3.8], [18, 0, 2, 2, 2, 2, 4, 0],
+      // dice income, dev cards bought, trades, robber+, robber-, dice-, blocked, luck
     ];
     v.players = [pv(0, 5, 10, 4, [9, 1, 2], 3), pv(1, 5, 8, 2, [11, 2, 3]), pv(2, 6, 7, 1, [12, 2, 3]), pv(3, 3, 6, 2, [12, 3, 3])].map((p, i) => {
       const [settlements, cities, dev_cards, largest_army, longest_road] = parts[i];
-      const [dice_income, dev_cards_bought, trades] = stats[i];
+      const [dice_income, dev_cards_bought, trades, robber_gained, robber_lost, dice_discarded, blocked, luck] = stats[i];
       return {
         ...p,
         dice_income,
         vp_total: p.vp,
         vp_breakdown: { settlements, cities, dev_cards, largest_army, longest_road },
-        stats: { dice_income, dev_cards_bought, trades },
+        stats: { dice_income, dev_cards_bought, trades, robber_gained, robber_lost, dice_discarded, blocked, luck },
       };
     });
     return { view: v };

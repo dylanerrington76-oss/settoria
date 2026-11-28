@@ -139,6 +139,7 @@ impl Game {
             rolled: false,
             dice: None,
             roll_counts: [0; 11],
+            luck_counts: true,
             dev_played: false,
             traded_away: Res::ZERO,
             setup_idx: 0,

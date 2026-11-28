@@ -110,7 +110,7 @@ If everyone leaves, the server forgets the game, the timer mode, the settings an
 
 | Field | Meaning |
 |---|---|
-| `you`, `players`, `order` | Your seat; one entry per player (name, color, `connected`, card counts, knights, pieces left, visible points `vp`, `longest_road`, `dice_income`); the seats in turn order. `vp_total`, `vp_breakdown` and `stats` are filled in only when the game is over. |
+| `you`, `players`, `order` | Your seat; one entry per player (name, color, `connected`, card counts, knights, pieces left, visible points `vp`, `longest_road`, `dice_income`); the seats in turn order. `vp_total`, `vp_breakdown` and `stats` are filled in only when the game is over; `stats` holds `dice_income`, `dev_cards_bought`, `trades`, `robber_gained`, `robber_lost`, `dice_discarded`, `blocked` (whole cards) and `luck` (cards, a number with up to two decimals, negative when unlucky). |
 | `settings`, `timer_mode` | The rules of this game (with the bank and deck scaled for 5 to 12 players, see [Rules](Rules.md#five-to-twelve-players)) and the timer mode. |
 | `board` | The board, in the short form below. **Only in a whole view**: a client that is sent patches gets it once. |
 | `phase` | `setup`, `roll`, `discard`, `move_robber`, `steal`, `volcano_pick`, `main`, `road_building` or `game_over`. |

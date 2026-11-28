@@ -335,6 +335,20 @@ export interface PlayerStats {
   dev_cards_bought: number;
   /** Completed player-to-player trades (bank trades are not counted). */
   trades: number;
+  /** Robber+: cards taken from other players with the robber (a 7 or a Knight). */
+  robber_gained: number;
+  /** Robber-: cards other players took from this player with the robber. */
+  robber_lost: number;
+  /** Dice-: cards discarded after a 7 for holding more than the discard limit. */
+  dice_discarded: number;
+  /** Blocked: cards the robber stopped this player's hexes from paying out (volcano and gold picks included). */
+  blocked: number;
+  /**
+   * Luck, in cards (two decimals): dice income minus the income the player's buildings were expected to bring in
+   * from the roll probabilities. Positive is lucky. Hexes under the robber are left out of the expectation
+   * (see `blocked`) and so are rolls named with the Alchemist.
+   */
+  luck: number;
 }
 export interface PlayerView {
   id: number;

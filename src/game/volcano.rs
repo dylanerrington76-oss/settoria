@@ -48,6 +48,11 @@ impl Game {
         if hex == self.robber {
             return vec![];
         }
+        self.volcano_cards(hex)
+    }
+
+    /// The cards the buildings on `hex` are worth when its number comes up, whether or not the robber is on it.
+    fn volcano_cards(&self, hex: usize) -> Vec<(PlayerId, u8)> {
         let start = self.order.iter().position(|&x| x == self.current).unwrap_or(0);
         (0..self.n)
             .map(|i| self.order[(start + i) % self.n])
@@ -107,6 +112,10 @@ impl Game {
             } else {
                 self.volcano_picks = self.volcano_owed(hex);
                 if hex == self.robber {
+                    // What the robber cost the players on it: the picks they would have had.
+                    for (p, cards) in self.volcano_cards(hex) {
+                        self.players[p].stats.blocked += u32::from(cards);
+                    }
                     if self.board.hexes[hex].terrain.is_gold() {
                         self.log(LogEvent::GoldBlocked { hex });
                     } else {
@@ -133,7 +142,7 @@ impl Game {
         self.players[p].hand[r] += 1;
         if !self.setup_pick {
             // (a starting card is not dice income, like the cards a last starting settlement collects)
-            self.players[p].stats.dice_income += 1;
+            self.add_dice_income(p, 1);
         }
         self.volcano_picks[0].1 -= 1;
         if self.volcano_picks[0].1 == 0 {
