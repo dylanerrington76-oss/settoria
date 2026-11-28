@@ -30,8 +30,14 @@ export const DEV_TONE = { top: '#ad84dc', bottom: '#8a5cc4', edge: '#5d3b8c' };
 export const UNKNOWN_TONE = { top: '#2d86e6', bottom: '#1346ad', edge: '#0d2f78' };
 
 /* Resource glyphs, drawn in a 40x40 box                               */
-export function Glyph({ res, fill, fill2, stroke }: { res: number; fill: string; fill2?: string; stroke?: string }) {
+/** A shadow is a flat, slightly translucent black copy of a piece, drawn a little lower and underneath it (no blur, no filter). */
+export const SHADOW_DY = 2.2;
+export const SHADOW_OPACITY = 0.26;
+
+/** `silhouette` draws every part in black (for a shadow copy; give `fill` and `fill2` as black too). */
+export function Glyph({ res, fill, fill2, stroke, silhouette }: { res: number; fill: string; fill2?: string; stroke?: string; silhouette?: boolean }) {
   const f2 = fill2 ?? fill;
+  const ink = (c: string) => (silhouette ? '#000' : c);
   const s = stroke ? { stroke, strokeWidth: 1.2, strokeLinejoin: 'round' as const } : {};
   switch (res) {
     case 0: // brick: three courses of bricks
@@ -82,14 +88,14 @@ export function Glyph({ res, fill, fill2, stroke }: { res: number; fill: string;
     default: // wool: sheep
       return (
         <g {...s}>
-          <rect x="11.5" y="27" width="3" height="8" rx="1.2" fill="#4b4b4b" stroke="none" />
-          <rect x="25" y="27" width="3" height="8" rx="1.2" fill="#4b4b4b" stroke="none" />
+          <rect x="11.5" y="27" width="3" height="8" rx="1.2" fill={ink('#4b4b4b')} stroke="none" />
+          <rect x="25" y="27" width="3" height="8" rx="1.2" fill={ink('#4b4b4b')} stroke="none" />
           <ellipse cx="18" cy="23" rx="13" ry="8" fill={fill} />
           <circle cx="9.5" cy="19" r="5.5" fill={fill} />
           <circle cx="17" cy="15" r="6.5" fill={fill} />
           <circle cx="25.5" cy="18" r="5.5" fill={fill} />
-          <ellipse cx="32.5" cy="22" rx="5" ry="4.6" fill="#6a6f73" stroke="none" />
-          <ellipse cx="29.6" cy="17.6" rx="2.4" ry="1.6" fill="#6a6f73" stroke="none" />
+          <ellipse cx="32.5" cy="22" rx="5" ry="4.6" fill={ink('#6a6f73')} stroke="none" />
+          <ellipse cx="29.6" cy="17.6" rx="2.4" ry="1.6" fill={ink('#6a6f73')} stroke="none" />
         </g>
       );
   }
@@ -236,6 +242,17 @@ export function PieceShape({ color, city }: { color: string; city?: boolean }) {
       <path d="M7.5 10 L11.5 8 V3.5 L7.5 5.5Z" fill="#fff" fillOpacity=".55" stroke="none" />
     </g>
   );
+}
+
+/**
+ * The shadow under a settlement or city: its outline as one flat, translucent black path, a little lower than the piece.
+ * One path (all parts wound the same way, so they merge) means no darker patches where parts touch, and no filter.
+ */
+export function PieceShadow({ city }: { city?: boolean }) {
+  const d = city
+    ? 'M-17 14 V-2 H-3 V14Z M-3 14 V2 H17 V14Z M-19 -2 L-10 -16 L-1 -2Z M-5 2 L4 -6 H12 L19 2Z'
+    : 'M4 15 V1 L15 -4 V10Z M-5 -11 L6 -16 L15 -4 L4 1Z M-14 15 V1 L-5 -11 L4 1 V15Z';
+  return <path d={d} transform={`translate(0 ${SHADOW_DY})`} fill="#000" fillOpacity={SHADOW_OPACITY} />;
 }
 
 /** Inline mini piece for the log / action bar. */

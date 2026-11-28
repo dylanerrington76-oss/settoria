@@ -72,6 +72,7 @@ impl Game {
     fn roll_dice(&mut self) {
         let mut rng = rand::thread_rng();
         let d = (rng.gen_range(1..=6u8), rng.gen_range(1..=6u8));
+        self.luck_counts = true;
         self.roll_dice_as(d);
     }
 
@@ -92,6 +93,7 @@ impl Game {
 
     /// Carry out the result of a roll: production, or the 7 sequence.
     pub(super) fn resolve_roll(&mut self, total: u8) {
+        self.expect_income();
         if total == 7 {
             if self.settings.speed {
                 // The robber moves down the line of players: each 7 is placed by the next one in turn order.
@@ -124,16 +126,61 @@ impl Game {
         }
     }
 
+    /// Luck: before a roll is carried out, add what each player's buildings were expected to bring in on it to
+    /// their (negative) running luck; `add_dice_income` adds what they actually got. Every roll is counted, a 7
+    /// included, since a 7 pays nobody. A hex pays on a roll of its number `n` with chance `ways(n) / 36`, so
+    /// a settlement on it is expected to bring in that many 36ths of a card and a city twice that. Resource hexes
+    /// and volcano/gold fields count alike (their picks are dice income too); hexes the robber sits on are left
+    /// out, because what they would have paid is counted as `PlayerStats::blocked` instead.
+    fn expect_income(&mut self) {
+        if !self.luck_counts {
+            return;
+        }
+        for (hi, hex) in self.board.hexes.iter().enumerate() {
+            if hi == self.robber || !(hex.terrain.resource().is_some() || hex.terrain.gives_free_pick()) {
+                continue;
+            }
+            let Some(number) = hex.number else { continue };
+            let ways = 6 - (7 - i32::from(number)).abs();
+            if ways <= 0 {
+                continue;
+            }
+            for &v in &hex.vertices {
+                if let Some(b) = self.buildings[v] {
+                    self.players[b.owner].stats.luck_36ths -= ways * if b.city { 2 } else { 1 };
+                }
+            }
+        }
+    }
+
+    /// Dice income: `cards` received by `p` because of the roll that was just made (production, or free picks at
+    /// a volcano or gold field). It counts for the Dice income stat, and for Luck when the roll counts for it.
+    pub(super) fn add_dice_income(&mut self, p: PlayerId, cards: u32) {
+        let counts = self.luck_counts;
+        let stats = &mut self.players[p].stats;
+        stats.dice_income += cards;
+        if counts {
+            stats.luck_36ths += 36 * cards as i32;
+        }
+    }
+
     pub(super) fn distribute(&mut self, roll: u8) {
         let mut gains: PerPlayer<Res> = PerPlayer::from_fn(self.n, |_| Res::ZERO);
+        let mut blocked: PerPlayer<u32> = PerPlayer::from_fn(self.n, |_| 0);
         for (hi, hex) in self.board.hexes.iter().enumerate() {
-            if hex.number != Some(roll) || hi == self.robber {
+            if hex.number != Some(roll) {
                 continue;
             }
             let Some(r) = hex.terrain.resource() else { continue };
             for &v in &hex.vertices {
                 if let Some(b) = self.buildings[v] {
-                    gains[b.owner][r] += if b.city { 2 } else { 1 };
+                    let cards: u32 = if b.city { 2 } else { 1 };
+                    if hi == self.robber {
+                        // The robber stops the hex paying: those cards are what it cost the owner.
+                        blocked[b.owner] += cards;
+                    } else {
+                        gains[b.owner][r] += cards as u8;
+                    }
                 }
             }
         }
@@ -164,7 +211,8 @@ impl Game {
                 self.players[p].hand[r] += received[p][r];
                 self.bank[r] -= received[p][r];
             }
-            self.players[p].stats.dice_income += received[p].total();
+            self.players[p].stats.blocked += blocked[p];
+            self.add_dice_income(p, received[p].total());
             if received[p].total() > 0 {
                 self.log(LogEvent::Collected { player: p, cards: received[p] });
             }

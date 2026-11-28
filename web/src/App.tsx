@@ -5,7 +5,7 @@ import type { MapZoomApi, ZoomEdge } from './mapZoom';
 import Footer from './Footer';
 import { MobileTable, useIsPhone } from './Mobile';
 import { MAX_FILES_AT_ONCE, UploadResult, uploadMapFile } from './mapUpload';
-import { formatPostgame, postgamePercent } from './postgame';
+import { formatLuck, formatPostgame, postgamePercent } from './postgame';
 import { GameSettingsPanel, settingsDifferences } from './GameSettings';
 import {
   BankRow,
@@ -1147,6 +1147,11 @@ function GameOver({ v, send }: { v: GameView; send: Send }) {
                   <th scope="col">Dice income</th>
                   <th scope="col">Dev cards</th>
                   <th scope="col">Trades</th>
+                  <th scope="col" title="Resources gained from robs">Robber+</th>
+                  <th scope="col" title="Resources lost from robs">Robber-</th>
+                  <th scope="col" title="Resources lost from discards for being over the dice limit">Dice-</th>
+                  <th scope="col" title="Resources lost to the robber blocking income">Blocked</th>
+                  <th scope="col" title="Actual dice production minus the production expected from the roll probabilities">Luck</th>
                   <th scope="col">Postgame%</th>
                 </tr>
               </thead>
@@ -1162,6 +1167,11 @@ function GameOver({ v, send }: { v: GameView; send: Send }) {
                     <td>{p.stats?.dice_income ?? '–'}</td>
                     <td>{p.stats?.dev_cards_bought ?? '–'}</td>
                     <td>{p.stats?.trades ?? '–'}</td>
+                    <td>{p.stats?.robber_gained ?? '–'}</td>
+                    <td>{p.stats?.robber_lost ?? '–'}</td>
+                    <td>{p.stats?.dice_discarded ?? '–'}</td>
+                    <td>{p.stats?.blocked ?? '–'}</td>
+                    <td>{p.stats ? formatLuck(p.stats.luck) : '–'}</td>
                     <td>{postgame[p.id] !== undefined ? formatPostgame(postgame[p.id]) : '–'}</td>
                   </tr>
                 ))}
@@ -1170,6 +1180,7 @@ function GameOver({ v, send }: { v: GameView; send: Send }) {
           </div>
           <p className="final-note">
             Dice income: resource cards received from dice rolls, volcano picks included. Dev cards: bought from the deck. Trades: completed trades with other players.
+            Robber+: cards gained from robs. Robber-: cards lost to robs. Dice-: cards lost by discarding after a 7. Blocked: cards the robber kept your hexes from paying.
           </p>
         </div>
       </div>

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 UI updates
 - added the Alchemist development card
 - added a variable discard limit setting
+- added postgame stats Robber+, Robber-, Dice-, Blocked and Luck
 
 ### [v2026.11.26]
 refactored game.rs

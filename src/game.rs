@@ -108,6 +108,10 @@ pub struct Game {
     /// How many times each dice total has been rolled this game: index `i` counts totals of `i + 2`
     /// (so 11 entries, for 2 through 12). Kept here rather than read back from the log, which is capped.
     pub roll_counts: [u32; 11],
+    /// Whether the latest roll counts toward `PlayerStats::luck_36ths`: true for every roll of the dice, false for a
+    /// roll named with the Alchemist (its owner chose it, so nobody was lucky or unlucky). It stays as the roll left
+    /// it until the next one, because the volcano and gold picks that follow a roll are part of that roll's income.
+    pub luck_counts: bool,
     pub dev_played: bool,
     /// Cards of each resource the current player has handed to other players in completed trades this turn.
     /// Two or more of a resource lock it out of Monopoly until the turn ends (`MONOPOLY_LOCK_CARDS`).

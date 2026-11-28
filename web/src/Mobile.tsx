@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useState } from 'react';
-import { Chevron, CountCard, DieFace, KnightsIcon, PersonIcon, PieceShape, RoadLenIcon, ToolIcon, isVeryDark, pieceEdge, shade } from './art';
+import { Avatar, Chevron, CountCard, DieFace, KnightsIcon, PersonIcon, PieceShape, RoadLenIcon, ToolIcon, isVeryDark, pieceEdge, shade } from './art';
 import { BankRow, Log, WinBar } from './ui';
 import type { ZoomEdge } from './mapZoom';
 import { GameView, luminance, total } from './types';
@@ -243,12 +243,9 @@ export function MobileTable({ v, status, board, overlays, clock, actions, hand, 
   const me = v.players[v.you];
   const order = seatOrder(v);
   const over = v.phase === 'game_over';
-  const mineTurn = v.current === v.you;
-  // The dice are yours to roll on your turn. On anyone else's turn, what they rolled is shown small under their card.
-  // In Speed mode the server rolls, so everyone just sees the last roll in the big dice (never clickable).
-  const speed = v.settings.speed;
-  const bigDice = showDice && (mineTurn || speed) && !over;
-  const smallDice = showDice && !speed && !mineTurn && !over && v.phase !== 'roll' && v.dice !== null;
+  // The dice float over the map for everyone: yours to roll on your turn, otherwise (and always in Speed mode, where the
+  // server rolls) the last roll, never clickable.
+  const showBigDice = showDice && !over;
 
   return (
     <div className="m-table">
@@ -285,24 +282,8 @@ export function MobileTable({ v, status, board, overlays, clock, actions, hand, 
               pieces={piecesOpen}
               below={
                 turn && (
-                  <>
-                    <div className="m-tab" aria-live="polite" title={status}>
-                      <span className="sr-only">{status}</span>
-                      <span className="m-tabtxt" aria-hidden="true">
-                        {shortStatus(v)}
-                      </span>
-                      {clock}
-                    </div>
-                    {smallDice && v.dice && (
-                      <div className="m-dice-s" aria-label={`${v.players[id].name} rolled ${v.dice[0] + v.dice[1]}`}>
-                        {v.dice.map((n, i) => (
-                          <span key={i} className="m-mdie">
-                            <DieFace n={n} r={15} />
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </>
+                  // Only marks whose turn it is; the words and the clock are over the map.
+                  <div className="m-tab" aria-hidden="true" />
                 )
               }
             />
@@ -321,16 +302,34 @@ export function MobileTable({ v, status, board, overlays, clock, actions, hand, 
           </button>
         </div>
         {overlays}
-        {bigDice && (
-          <button className={'dice' + (canRoll ? ' ready' : '')} disabled={!canRoll} onClick={onRoll} aria-label={canRoll ? 'Roll dice' : 'Last roll'}>
-            <span className="die">
-              <DieFace n={dice[0]} />
-            </span>
-            <span className="die">
-              <DieFace n={dice[1]} />
-            </span>
-          </button>
-        )}
+        {/* The dice, the status box and the clock float over the bottom right of the map: the map is drawn full size under them. */}
+        <div className="m-hud">
+          {showBigDice && (
+            <button className={'dice' + (canRoll ? ' ready' : '')} disabled={!canRoll} onClick={onRoll} aria-label={canRoll ? 'Roll dice' : 'Last roll'}>
+              <span className="die">
+                <DieFace n={dice[0]} />
+              </span>
+              <span className="die">
+                <DieFace n={dice[1]} />
+              </span>
+            </button>
+          )}
+          <div className="status" aria-live="polite" title={status}>
+            <span className="sr-only">{status}</span>
+            {canRoll ? (
+              <button className="pill" onClick={onRoll} aria-hidden="true" tabIndex={-1}>
+                <Avatar color={v.players[v.current].color} self size={26} />
+                <span>{shortStatus(v)}</span>
+              </button>
+            ) : (
+              <div className="pill" aria-hidden="true">
+                {!over && <Avatar color={v.players[v.current].color} self size={26} />}
+                <span>{shortStatus(v)}</span>
+              </div>
+            )}
+            {clock}
+          </div>
+        </div>
         <button className={'m-logbtn' + (logOpen ? ' on' : '')} aria-label="Game log" aria-expanded={logOpen} title="Game log" onClick={() => setLogOpen(!logOpen)}>
           <LogIcon />
         </button>
