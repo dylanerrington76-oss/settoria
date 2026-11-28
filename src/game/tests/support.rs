@@ -82,6 +82,8 @@ pub(super) fn line_of_roads(g: &mut Game, p: PlayerId, count: usize) -> Vec<usiz
 }
 
 pub(super) fn invariants(g: &Game) {
+    // The kept longest roads never go stale: they are what a fresh search finds, whatever just happened.
+    assert_eq!(g.longest_roads(), PerPlayer::from_fn(g.n, |p| g.longest_road(p)), "stale longest roads");
     for r in Resource::ALL {
         let held: u32 = g.players.iter().map(|p| p.hand[r] as u32).sum();
         assert_eq!(held + g.bank[r] as u32, g.settings.resource_max as u32, "{} not conserved", r.name());
@@ -159,6 +161,10 @@ pub(super) fn play_random(g: &mut Game, rng: &mut impl Rng) {
                 }
                 if rng.gen_bool(0.2) {
                     let _ = g.apply(p, Action::PlayKnight);
+                }
+                if g.phase == Phase::Roll && rng.gen_bool(0.3) {
+                    // An Alchemist, if the player has one: it is the roll, with the dice they name.
+                    let _ = g.apply(p, Action::PlayAlchemist { dice: (rng.gen_range(1..=6), rng.gen_range(1..=6)) });
                 }
                 if g.phase == Phase::Roll {
                     g.apply(p, Action::Roll).unwrap();

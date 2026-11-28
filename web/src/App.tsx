@@ -17,6 +17,7 @@ import {
   PickResourceDialog,
   PlayerRow,
   DiscardPanel,
+  AlchemistDialog,
   VolcanoBar,
   RulesDialog,
   SettingsDialog,
@@ -34,6 +35,7 @@ import {
   COST_SETTLEMENT,
   covers,
   DEFAULT_SETTINGS,
+  DEV_ALCHEMIST,
   GameView,
   LobbyPlayer,
   CLOCK_LABELS,
@@ -69,7 +71,7 @@ const PageLoading = () => (
 
 type Send = (msg: object) => void;
 type BuildMode = 'road' | 'bridge' | 'settlement' | 'city' | null;
-type Dialog = null | 'trade' | 'plenty' | 'monopoly' | 'rules' | 'info' | 'settings';
+type Dialog = null | 'trade' | 'plenty' | 'monopoly' | 'alchemist' | 'rules' | 'info' | 'settings';
 
 export default function App() {
   const { screen, error, online, name, send, join, leave } = useGame();
@@ -674,6 +676,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
     else if (k === 1) act({ type: 'play_road_building' });
     else if (k === 2) setDialog('plenty');
     else if (k === 3) setDialog('monopoly');
+    else if (k === DEV_ALCHEMIST) setDialog('alchemist');
   };
 
   const canRoll = mine && v.phase === 'roll';
@@ -738,7 +741,7 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
   const discardEl = discardNeed ? (
     <DiscardPanel
       need={discardNeed[1]}
-      limit={v.settings.discard_limit}
+      limit={v.discard_limit_now}
       pick={pick}
       rolled={v.dice ? v.dice[0] + v.dice[1] : null}
       onUnpick={(i) => setPick((p) => p.map((x, j) => (j === i ? x - 1 : x)) as Res)}
@@ -847,6 +850,15 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
           }}
         />
       )}
+      {dialog === 'alchemist' && (
+        <AlchemistDialog
+          onClose={() => setDialog(null)}
+          onPick={(dice) => {
+            act({ type: 'play_alchemist', dice });
+            setDialog(null);
+          }}
+        />
+      )}
       {dialog === 'monopoly' && (
         <PickResourceDialog
           title="Monopoly"
@@ -947,34 +959,36 @@ export function GameScreen({ v, send, clockOverride }: { v: GameView; send: Send
 
           {volcanoEl}
 
-          {showDice && (
-            <button className={'dice' + (canRoll ? ' ready' : '')} disabled={!canRoll} onClick={() => act({ type: 'roll' })} aria-label={canRoll ? 'Roll dice' : 'Last roll'}>
-              <span className="die">
-                <DieFace n={die[0]} />
-              </span>
-              <span className="die">
-                <DieFace n={die[1]} />
-              </span>
-            </button>
-          )}
+          {/* The dice, the status box and the clock float over the bottom right of the map, like the tool buttons at the top left. */}
+          <div className="hud">
+            {showDice && (
+              <button className={'dice' + (canRoll ? ' ready' : '')} disabled={!canRoll} onClick={() => act({ type: 'roll' })} aria-label={canRoll ? 'Roll dice' : 'Last roll'}>
+                <span className="die">
+                  <DieFace n={die[0]} />
+                </span>
+                <span className="die">
+                  <DieFace n={die[1]} />
+                </span>
+              </button>
+            )}
+            <div className="status">
+              {canRoll ? (
+                <button className="pill" onClick={() => act({ type: 'roll' })} aria-live="polite">
+                  <Avatar color={v.players[v.current].color} self size={34} />
+                  <span>{statusFor(v)}</span>
+                </button>
+              ) : (
+                <div className="pill" aria-live="polite">
+                  {v.phase !== 'game_over' && <Avatar color={v.players[v.current].color} self size={34} />}
+                  <span>{statusFor(v)}</span>
+                </div>
+              )}
+              <TurnClock timer={v.timer} override={clockOverride} />
+            </div>
+          </div>
         </main>
 
         <div className={'bottom' + (v.settings.bridges ? ' with-bridge' : '') + (speed ? ' speed' : '')}>
-          <div className="status">
-            {canRoll ? (
-              <button className="pill" onClick={() => act({ type: 'roll' })} aria-live="polite">
-                <Avatar color={v.players[v.current].color} self size={34} />
-                <span>{statusFor(v)}</span>
-              </button>
-            ) : (
-              <div className="pill" aria-live="polite">
-                {v.phase !== 'game_over' && <Avatar color={v.players[v.current].color} self size={34} />}
-                <span>{statusFor(v)}</span>
-              </div>
-            )}
-            <TurnClock timer={v.timer} override={clockOverride} />
-          </div>
-
           <div className="handwrap">
             {discardEl}
             <div className="handbar">{handEl}</div>

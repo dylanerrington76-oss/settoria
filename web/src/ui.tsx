@@ -26,6 +26,8 @@ import {
   covers,
   devHelp,
   DEV_NAMES,
+  DEV_ALCHEMIST,
+  DEV_VICTORY_POINT,
   friendlyRobberMaxVp,
   ClockKind,
   GameView,
@@ -381,6 +383,47 @@ export function PickResourceDialog({
   );
 }
 
+/**
+ * The Alchemist: pick what each of the two dice shows, then confirm. Playing the card is the roll, so the server
+ * rolls with the numbers chosen here (`play_alchemist` in src/game/action.rs).
+ */
+export function AlchemistDialog({ onClose, onPick }: { onClose: () => void; onPick: (dice: [number, number]) => void }) {
+  const [dice, setDice] = useState<[number, number]>([3, 4]);
+  const set = (die: 0 | 1, n: number) => setDice((d) => (die === 0 ? [n, d[1]] : [d[0], n]));
+  return (
+    <Modal title="Alchemist" onClose={onClose}>
+      <p className="muted">Choose what each die shows. Playing the Alchemist is your roll for this turn.</p>
+      {([0, 1] as const).map((die) => (
+        <div key={die} className="alchemist-die" role="radiogroup" aria-label={`Die ${die + 1}`}>
+          <span className="alchemist-label">Die {die + 1}</span>
+          {[1, 2, 3, 4, 5, 6].map((n) => (
+            <button
+              key={n}
+              role="radio"
+              aria-checked={dice[die] === n}
+              aria-label={`${n}`}
+              className={'alchemist-pick' + (dice[die] === n ? ' selected' : '')}
+              onClick={() => set(die, n)}
+            >
+              <DieFace n={n} r={11} />
+            </button>
+          ))}
+        </div>
+      ))}
+      <p className="picked">
+        Roll: {dice[0]} + {dice[1]} = {dice[0] + dice[1]}
+        {dice[0] + dice[1] === 7 && ' (the robber)'}
+      </p>
+      <div className="modal-actions">
+        <button onClick={onClose}>Cancel</button>
+        <button className="primary" onClick={() => onPick(dice)}>
+          Play Alchemist
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 /** "1 point", "2 points". */
 const pts = (n: number): string => `${n} point${n === 1 ? '' : 's'}`;
 
@@ -419,8 +462,16 @@ export function RulesDialog({ settings, volcano, gold, onClose }: { settings: Se
         <li>
           Each Victory Point card is worth {pts(settings.vp_card_points)}.
         </li>
+        {settings.alchemist && !settings.speed && (
+          <li>
+            The Alchemist is played at the start of your turn, before you roll, instead of rolling: you choose what each die shows. It
+            counts as your development card for the turn.
+          </li>
+        )}
         <li>
           Roll a 7 and anyone holding more than {settings.discard_limit} cards discards half, then the robber moves.
+          {settings.variable_discard &&
+            ` The limit rises by 1 after every ${settings.discard_step_rolls} roll${settings.discard_step_rolls === 1 ? '' : 's'} of the dice (anyone's), up to ${settings.discard_limit_cap}.`}
           {settings.friendly_robber &&
             ` Friendly Robber is on: it can't go next to a player with ${friendlyRobberMaxVp(settings)} points or fewer.`}
         </li>
@@ -593,7 +644,7 @@ export function Hand({
   canPlayDev: boolean;
   onPlayDev: (kind: number) => void;
 }) {
-  const devKinds = [0, 1, 2, 3, 4].filter((k) => v.dev[k] + v.dev_new[k] > 0);
+  const devKinds = [0, 1, 2, 3, 4, 5].filter((k) => v.dev[k] + v.dev_new[k] > 0);
   return (
     <div className="hand" aria-label="Your cards">
       {RES_ORDER.map((i) => {
@@ -615,7 +666,8 @@ export function Hand({
       {devKinds.map((k) => {
         const n = v.dev[k] + v.dev_new[k];
         const ready = v.dev[k] > 0;
-        const playable = ready && k !== 4 && canPlayDev;
+        // The Alchemist stands in for the roll, so it is only playable before it.
+        const playable = ready && k !== DEV_VICTORY_POINT && canPlayDev && (k !== DEV_ALCHEMIST || (v.phase === 'roll' && !v.settings.speed));
         return (
           <button
             key={k}
@@ -625,7 +677,7 @@ export function Hand({
             onClick={() => onPlayDev(k)}
           >
             <CountCard res="dev" n={n} />
-            <span className="dev-tag">{['Knight', 'Roads', 'Plenty', 'Monop.', 'VP'][k]}</span>
+            <span className="dev-tag">{['Knight', 'Roads', 'Plenty', 'Monop.', 'VP', 'Alch.'][k]}</span>
           </button>
         );
       })}
@@ -737,7 +789,7 @@ export function PlayerRow({ v, id }: { v: GameView; id: number }) {
           <WinBar v={v} id={id} className="prow-win" />
         </div>
         <div className="prow-cards">
-          <CountCard res="unknown" n={cards} alert={me && cards > v.settings.discard_limit} className="pcard" />
+          <CountCard res="unknown" n={cards} alert={me && cards > v.discard_limit_now} className="pcard" />
           <CountCard res="dev" n={devs} className="pcard" />
         </div>
         <div className="prow-stats">
@@ -986,6 +1038,8 @@ function describe(e: LogEvent, v: GameView): ReactNode {
           <MiniCard res={e.second} />
         </>
       );
+    case 'played_alchemist':
+      return <>{' played the Alchemist and chose the dice'}</>;
     case 'played_monopoly':
       return (
         <>

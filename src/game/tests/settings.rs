@@ -25,7 +25,8 @@ fn defaults_are_the_standard_rules_with_15_points() {
     assert_eq!((d.longest_road_points, d.largest_army_points, d.vp_card_points), (2, 2, 1));
     assert_eq!((d.longest_road_min, d.largest_army_min, d.starting_settlements, d.bank_ratio), (5, 3, 2, 4));
     assert!(d.changes().is_empty(), "defaults log nothing");
-    assert_eq!(d.deck_counts(), ByDev([14, 2, 2, 2, 5]));
+    assert_eq!(d.deck_counts(), ByDev([14, 2, 2, 2, 5, 0]));
+    assert_eq!((d.variable_discard, d.discard_step_rolls, d.discard_limit_cap, d.alchemist), (false, 10, 10, false));
     // A partial JSON object fills in the rest from the defaults.
     let s: Settings = serde_json::from_str("{\"points_to_win\":12}").unwrap();
     assert_eq!((s.points_to_win, s.max_roads), (12, 15));
@@ -103,8 +104,8 @@ fn dev_deck_has_the_chosen_size_in_standard_proportions() {
         let g = Game::with_settings(names(2), s);
         assert_eq!(g.deck.len(), total as usize);
     }
-    assert_eq!(with(|s| s.dev_cards = 50).deck_counts(), ByDev([28, 4, 4, 4, 10]));
-    assert_eq!(with(|s| s.dev_cards = 10).deck_counts(), ByDev([5, 1, 1, 1, 2]));
+    assert_eq!(with(|s| s.dev_cards = 50).deck_counts(), ByDev([28, 4, 4, 4, 10, 0]));
+    assert_eq!(with(|s| s.dev_cards = 10).deck_counts(), ByDev([5, 1, 1, 1, 2, 0]));
     // an empty deck can't be bought from
     let mut g = Game::with_settings(names(2), with(|s| s.dev_cards = 0));
     g.phase = Phase::Main;

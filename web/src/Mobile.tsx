@@ -169,7 +169,7 @@ function MobilePlayer({ v, id, pieces, below }: { v: GameView; id: number; piece
         </div>
         <div className="m-pbody">
           <div className="m-pmain">
-            <CountCard res="unknown" n={cards} alert={me && cards > v.settings.discard_limit} className="m-pc" />
+            <CountCard res="unknown" n={cards} alert={me && cards > v.discard_limit_now} className="m-pc" />
             <CountCard res="dev" n={devs} className="m-pc" />
             <div className="m-stats">
               <Stat icon={<KnightsIcon />} n={p.knights} held={army} title={army ? 'Largest Army: knights played' : 'Knights played'} />

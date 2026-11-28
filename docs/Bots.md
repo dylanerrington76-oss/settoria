@@ -71,7 +71,9 @@ whoever has the most public points among the others.
   Army if it takes it, plus half the best robbing. Road Building: twice the best road it can place, if that is worth at
   least 15. Year of Plenty: nine tenths of a build it completes. Monopoly: what it expects to take (it can't see hands, so
   a fifth of the cards the others hold) plus a bonus if the resource is one it is short of, if that reaches 30 and the resource
-  is not [locked](Rules.md#trading). Bots play only one card per turn, like anyone.
+  is not [locked](Rules.md#trading). Alchemist: before the roll, a bot names the best total from 2 to 12 other than 7 (the one that pays it most, and the
+  others least, per player) when that beats an average roll by at least `ALCHEMIST_MIN_GAIN` half cards; otherwise it
+  rolls. It never names a 7. Bots play only one card per turn, like anyone.
 - **Trading with players.** A bot never proposes a trade, and it declines any offer a player makes it, so bots don't trade
   with people. (They use the bank.)
 
@@ -103,7 +105,7 @@ whoever has the most public points among the others.
 
 The weights are named constants at the top of `src/bot.rs`: `POINT`, `PIP`, `NEW_RESOURCE_BONUS`, `HARBOUR_MATCH_BONUS`,
 `HARBOUR_ANY_BONUS`, `ROAD_LOOKAHEAD`, `ROAD_WHEN_SETTLING_DIVISOR`, `DEV_BASE`, `DEV_SPARE_BONUS`, `DEV_IDLE_BONUS`,
-`ROLL_SCORE`, `KNIGHT_BASE`, `TRADE_SHARE_TENTHS`, `TRADE_MIN_TARGET`, `PLENTY_SHARE_TENTHS`, `MONOPOLY_MIN`,
+`ROLL_SCORE`, `KNIGHT_BASE`, `ALCHEMIST_MIN_GAIN`, `ALCHEMIST_GAIN_SCORE`, `TRADE_SHARE_TENTHS`, `TRADE_MIN_TARGET`, `PLENTY_SHARE_TENTHS`, `MONOPOLY_MIN`,
 `ROAD_BUILDING_MIN`, `OWN_HEX_PENALTY`, `THINK_MS_MIN` and `THINK_MS_MAX`, and `MAX_ACTIONS_PER_TURN`. Change a number and
 `cargo test --release`: the bot tests (in `src/bot.rs`) check individual choices, and whole games are played to the
 end on the standard map, Earth with bridges, and a map with volcanoes, to make sure bots never get stuck or refused.

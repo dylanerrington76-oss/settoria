@@ -53,10 +53,30 @@ impl Game {
         self.roll_dice();
     }
 
+    /// How many times the dice have been rolled this game (every roll counts, whoever rolled it).
+    pub fn rolls(&self) -> u32 {
+        self.roll_counts.iter().sum()
+    }
+
+    /// The discard limit that applies to the 7 being dealt with (during `Phase::Discard`) or, at any other time,
+    /// to the next 7. It only differs from `Settings::discard_limit` with `Settings::variable_discard`.
+    pub fn discard_limit_now(&self) -> u8 {
+        let rolls = self.rolls();
+        // The 7 that is being dealt with is already counted, but the limit it was held to is the one set by the
+        // rolls before it.
+        let before = if self.phase == Phase::Discard { rolls.saturating_sub(1) } else { rolls };
+        self.settings.discard_limit_after(before)
+    }
+
     /// Throw the dice and carry out the result.
     fn roll_dice(&mut self) {
         let mut rng = rand::thread_rng();
         let d = (rng.gen_range(1..=6u8), rng.gen_range(1..=6u8));
+        self.roll_dice_as(d);
+    }
+
+    /// Carry out a roll that shows `d`: the dice are thrown by `roll_dice`, or named by an Alchemist.
+    pub(super) fn roll_dice_as(&mut self, d: (u8, u8)) {
         let total = d.0 + d.1;
         self.dice = Some(d);
         self.lava = None;
@@ -78,10 +98,12 @@ impl Game {
                 self.current = self.speed_lead();
                 self.rotation += 1;
             }
+            // This 7 is already counted in `roll_counts`; the limit it is held to comes from the rolls before it.
+            let limit = self.settings.discard_limit_after(self.rolls().saturating_sub(1));
             self.discards = PlayerId::range(self.n)
                 .filter_map(|i| {
                     let c = self.players[i].hand.total();
-                    if c > self.settings.discard_limit as u32 {
+                    if c > u32::from(limit) {
                         Some((i, (c / 2) as u8))
                     } else {
                         None
@@ -93,7 +115,7 @@ impl Game {
                 self.log(LogEvent::RobberMustMove);
             } else {
                 self.phase = Phase::Discard;
-                self.log(LogEvent::MustDiscard { limit: self.settings.discard_limit });
+                self.log(LogEvent::MustDiscard { limit });
             }
         } else {
             self.distribute(total);

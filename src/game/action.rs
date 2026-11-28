@@ -19,6 +19,9 @@ pub enum Action {
     PlayRoadBuilding,
     PlayYearOfPlenty { a: Resource, b: Resource },
     PlayMonopoly { resource: Resource },
+    /// An Alchemist, played at the start of the turn instead of rolling: the player names what the two dice
+    /// show (each 1 to 6) and the roll is carried out with them.
+    PlayAlchemist { dice: (u8, u8) },
     MoveRobber { hex: usize },
     Steal { victim: PlayerId },
     Discard { cards: Res },
@@ -97,6 +100,7 @@ impl Game {
             Action::PlayRoadBuilding => self.do_road_building_card(p),
             Action::PlayYearOfPlenty { a, b } => self.do_year_of_plenty(p, a, b),
             Action::PlayMonopoly { resource } => self.do_monopoly(p, resource),
+            Action::PlayAlchemist { dice } => self.do_alchemist(p, dice),
             Action::MoveRobber { hex } => self.do_move_robber(p, hex),
             Action::Steal { victim } => self.do_steal(victim),
             Action::BankTrade { give, get } => self.do_bank_trade(p, give, get),

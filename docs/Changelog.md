@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+### [v2026.11.27]
+UI updates
+- added the Alchemist development card
+- added a variable discard limit setting
+
 ### [v2026.11.26]
 refactored game.rs
 

@@ -105,6 +105,9 @@ pub struct HarbourView {
 pub struct GameView<'a> {
     pub you: PlayerId,
     pub settings: Settings,
+    /// The discard limit a 7 is held to right now (the 7 being dealt with in the discard phase, otherwise the
+    /// next one). `settings.discard_limit` is where it starts; with `settings.variable_discard` it rises.
+    pub discard_limit_now: u8,
     /// The board never changes during a game, so a client that asked for patches is sent it once, in its first
     /// view, and `view()` always fills it in; the server clears it where it has already been sent
     /// (see `update_seat` in main.rs). Cleared, it is left out of the JSON altogether.
@@ -190,6 +193,7 @@ impl Game {
         GameView {
             you,
             settings: self.settings,
+            discard_limit_now: self.discard_limit_now(),
             board: Some(&self.board),
             phase: self.phase,
             current: self.current,

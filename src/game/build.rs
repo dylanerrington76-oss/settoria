@@ -16,6 +16,7 @@ impl Game {
     fn place_road(&mut self, p: PlayerId, edge: usize) {
         self.roads[edge] = Some(p);
         self.players[p].roads_left -= 1;
+        self.invalidate_road_lens();
     }
 
     pub(super) fn do_build_road(&mut self, p: PlayerId, edge: usize) -> Result<(), String> {
@@ -124,6 +125,7 @@ impl Game {
                     return Err("You can't build a settlement there".into());
                 }
                 self.buildings[v] = Some(Building { owner: p, city: false });
+                self.invalidate_road_lens();
                 self.players[p].settlements_left -= 1;
                 self.setup_vertex = Some(v);
                 let mut volcanoes = vec![];

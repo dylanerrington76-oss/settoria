@@ -304,6 +304,9 @@ function computeGeometry(board: BoardData) {
   const box = { x0, y0, w: Math.max(...xs) + 34 - x0, h };
 
   const land = board.hexes.map((hx) => hexPoints(hx.x * S, hx.y * S, S * 1.0));
+  // Every hex outline as one path (one closed sub-path per hex). The four shoreline layers are each a single solid
+  // colour, so one <path> per layer looks exactly like one <polygon> per hex per layer, with far fewer elements.
+  const shore = land.map((pts) => `M${pts.split(' ').join('L')}Z`).join('');
 
   // A faint hex grid across the open sea, if the map's file asks for one (`style.sea_grid`).
   const sea: string[] = [];
@@ -317,7 +320,7 @@ function computeGeometry(board: BoardData) {
       for (let q = q0; q <= q1; q++) sea.push(hexPoints(w * (q + r / 2), 1.5 * S * r, S));
     }
   }
-  return { ports, box, land, sea };
+  return { ports, box, shore, sea };
 }
 type Geometry = ReturnType<typeof computeGeometry>;
 
@@ -329,12 +332,12 @@ const MAX_TARGET_GROW = 1.5;
 
 /**
  * How big a hex really is on screen: CSS pixels per board unit, i.e. how far the board's box is scaled down to
- * fit the space it is given. Follows the size of the `<svg>`, so it also changes with the window.
+ * fit the space it is given. Follows the size of the board's host `<div>`, so it also changes with the window.
  * Until the first measurement (and where there is no `ResizeObserver`) it says 1. This is the scale of the whole
- * board; zooming in is on top of it. `size` is the `<svg>`'s size in pixels (null until measured).
+ * board; zooming in is on top of it. `size` is the host's size in pixels (null until measured).
  */
 function useScreenScale(box: { w: number; h: number }) {
-  const ref = useRef<SVGSVGElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => {
     const el = ref.current;
@@ -363,9 +366,11 @@ const targetGrow = (scale: number): number => Math.min(MAX_TARGET_GROW, Math.max
  * The part of the board that never changes during a game: sea, shoreline, harbours, tiles and
  * number tokens (about 90% of the board's elements). It is memoized, so a new game message
  * does not re-render it; it only redraws when the board itself or the pips setting changes.
+ * It is drawn in an `<svg>` of its own (see `Board`) that the browser keeps as a GPU layer, so what it
+ * references (gradients, filters) is defined here; the pieces drawn over it have their own `<defs>`.
  */
 const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board: BoardData; geo: Geometry; showPips: boolean }) {
-  const { ports, land, sea } = geo;
+  const { ports, shore, sea } = geo;
   return (
     <>
       <defs>
@@ -383,18 +388,11 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
         <filter id="lift" x="-30%" y="-30%" width="160%" height="160%">
           <feDropShadow dx="0" dy="1.6" stdDeviation="1.5" floodColor="#000" floodOpacity="0.35" />
         </filter>
-        <filter id="drop" x="-40%" y="-40%" width="180%" height="190%">
-          <feDropShadow dx="0" dy="2.5" stdDeviation="1.8" floodColor="#000" floodOpacity="0.45" />
-        </filter>
         <linearGradient id="sail" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#ffffff" />
           <stop offset="0.7" stopColor="#f4f4f2" />
           <stop offset="1" stopColor="#d2d7da" />
         </linearGradient>
-        <radialGradient id="rob" cx="38%" cy="32%" r="75%">
-          <stop offset="0" stopColor="#ececec" />
-          <stop offset="1" stopColor="#a9a9a9" />
-        </radialGradient>
         <linearGradient id="hull" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#f0b040" />
           <stop offset="1" stopColor="#d88a1c" />
@@ -411,19 +409,12 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
 
       {/* shoreline: shallow water, foam, pale beach, sand */}
       <g filter="url(#wavy)">
-        {land.map((pts, i) => (
-          <polygon key={i} points={pts} fill="#3a93c8" stroke="#3a93c8" strokeWidth={47} strokeLinejoin="round" />
-        ))}
-        {land.map((pts, i) => (
-          <polygon key={i} points={pts} fill="#86d4f8" stroke="#86d4f8" strokeWidth={38} strokeLinejoin="round" />
-        ))}
+        <path d={shore} fill="#3a93c8" stroke="#3a93c8" strokeWidth={47} strokeLinejoin="round" />
+        <path d={shore} fill="#86d4f8" stroke="#86d4f8" strokeWidth={38} strokeLinejoin="round" />
       </g>
-      {land.map((pts, i) => (
-        <polygon key={i} points={pts} fill="#f4ebc6" stroke="#f4ebc6" strokeWidth={27} strokeLinejoin="round" />
-      ))}
-      {land.map((pts, i) => (
-        <polygon key={i} points={pts} fill="#e3b86a" stroke="#e3b86a" strokeWidth={15} strokeLinejoin="round" />
-      ))}
+      <path d={shore} fill="#f4ebc6" stroke="#f4ebc6" strokeWidth={27} strokeLinejoin="round" />
+      <path d={shore} fill="#e3b86a" stroke="#e3b86a" strokeWidth={15} strokeLinejoin="round" />
+
 
       {/* harbours */}
       {ports.map(({ p, a, b, sx, sy }, i) => (
@@ -544,6 +535,22 @@ const BoardStatic = memo(function BoardStatic({ board, geo, showPips }: { board:
   );
 });
 
+/** What the pieces drawn over the map reference: the shadow under buildings and the robber, the robber's shading, and the desert's shade under the robber. */
+function OverlayDefs() {
+  return (
+    <defs>
+      <filter id="drop" x="-40%" y="-40%" width="180%" height="190%">
+        <feDropShadow dx="0" dy="2.5" stdDeviation="1.8" floodColor="#000" floodOpacity="0.45" />
+      </filter>
+      <radialGradient id="rob" cx="38%" cy="32%" r="75%">
+        <stop offset="0" stopColor="#ececec" />
+        <stop offset="1" stopColor="#a9a9a9" />
+      </radialGradient>
+      <DesertDefs uid="bo" scale={S} />
+    </defs>
+  );
+}
+
 /** The cross planks that mark a road as a bridge: short lines across it, evenly spaced from end to end. */
 function BridgePlanks({ a, b, stroke }: { a: Vertex; b: Vertex; stroke: string }) {
   const [ax, ay, bx, by] = [a.x * S, a.y * S, b.x * S, b.y * S];
@@ -561,142 +568,149 @@ function BridgePlanks({ a, b, stroke }: { a: Vertex; b: Vertex; stroke: string }
 }
 
 /**
- * The board: a memoized static layer plus the pieces that change with the game (roads, buildings,
+ * The board: a memoized static map plus the pieces that change with the game (roads, buildings,
  * robber, click targets), which are cheap to redraw on every message.
+ *
+ * They are two `<svg>`s stacked in one host `<div>`, with the same `viewBox`. The map is in its own `<div>` that the
+ * browser keeps as a GPU layer (`.board-static`, `will-change: transform`), so panning and zooming only move that picture
+ * and never re-draw its thousands of elements. (The same hint on a `<g>` inside one `<svg>` does nothing: the browser
+ * draws the whole `<svg>` as one.) The overlay is small, so it is simply moved as a `<g>`. See mapZoom.ts.
  */
 export default function Board({ view, vertexTargets, edgeTargets, hexTargets, showPips = true, onVertex, onEdge, onHex, zoomApi, onZoomEdge }: Props) {
   const board = useStableBoard(view.board);
   const geo = useMemo(() => computeGeometry(board), [board]);
   const { box } = geo;
   const { ref, scale, size } = useScreenScale(box);
-  // Zoom and pan move one layer inside the <svg>; nothing outside the board is touched (see mapZoom.ts).
-  const { layer, zoom, handlers } = useMapZoom({ svg: ref, box, size, resetKey: board, api: zoomApi, onEdge: onZoomEdge });
+  // Zoom and pan move the two layers inside the host; nothing outside the board is touched (see mapZoom.ts).
+  const { layer, staticLayer, zoom, handlers } = useMapZoom({ host: ref, box, size, resetKey: board, api: zoomApi, onEdge: onZoomEdge });
+  const viewBox = `${box.x0} ${box.y0} ${box.w} ${box.h}`;
   // A board with many hexes is drawn small, so its click targets get more room, by what's actually on screen (zoomed in, hexes are bigger).
   const grow = targetGrow(scale * zoom);
+  // `setZoom` re-renders the board on every wheel tick; the road outlines depend only on the board and the roads
+  // (patch.ts keeps an untouched `view.roads` identical), so they are worked out only when one of those changes.
+  const roads = useMemo(() => roadShapes(board, view.roads), [board, view.roads]);
 
   return (
-    <svg
-      ref={ref}
-      className={'board' + (zoom > 1 ? ' zoomed' : '')}
-      viewBox={`${box.x0} ${box.y0} ${box.w} ${box.h}`}
-      preserveAspectRatio="xMidYMid meet"
-      role="img"
-      aria-label="Catan board"
-      {...handlers}
-    >
-      <g ref={layer} className="board-layer">
-        <BoardStatic board={board} geo={geo} showPips={showPips} />
-
-        {/* roads */}
-        {roadShapes(board, view.roads).map((r) => {
-          const col = view.players[r.owner].color;
-          const dark = isVeryDark(col);
-          const outline = dark ? pieceEdge(col) : shade(col, -0.8);
-          return (
-            <g key={r.edge}>
-              <linearGradient id={`road-${r.edge}`} gradientUnits="userSpaceOnUse" x1={r.across[0]} y1={r.across[1]} x2={r.across[2]} y2={r.across[3]}>
-                <stop offset="0" stopColor={shade(col, 0.45)} />
-                <stop offset="0.28" stopColor={shade(col, 0.12)} />
-                <stop offset="0.55" stopColor={shade(col, dark ? 0.1 : -0.3)} />
-                <stop offset="0.82" stopColor={col} />
-                <stop offset="1" stopColor={shade(col, 0.35)} />
-              </linearGradient>
-              <polygon
-                points={r.pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')}
-                fill={`url(#road-${r.edge})`}
-                stroke={outline}
-                strokeWidth={ROAD_LINE}
-                strokeLinejoin="miter"
-                strokeMiterlimit={4}
-              />
-              {board.edges[r.edge].bridge && <BridgePlanks a={board.vertices[board.edges[r.edge].a]} b={board.vertices[board.edges[r.edge].b]} stroke={outline} />}
-            </g>
-          );
-        })}
-
-        {/* buildings */}
-        {board.vertices.map((v, i) => {
-          const b = view.buildings[i];
-          if (!b) return null;
-          return (
-            <g key={i} transform={`translate(${v.x * S} ${v.y * S - 6}) scale(${b.city ? 1.12 : 1.22})`} filter="url(#drop)">
-              <PieceShape color={view.players[b.owner].color} city={b.city} />
-            </g>
-          );
-        })}
-
-        {/* settlements on loan after lava hit a city: a crack in the base */}
-        {view.damaged.map((i) => {
-          const v = board.vertices[i];
-          return (
-            <g key={`dm${i}`} className="damaged" transform={`translate(${v.x * S} ${v.y * S + 9})`}>
-              <path d="M-9 0 L-3 -3 L0 2 L4 -2 L9 1" fill="none" stroke="#ff5a1f" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-              <title>Damaged by lava: repair this settlement (upgrade it to a city) before building another city</title>
-            </g>
-          );
-        })}
-
-        {/* where the last lava flow ran */}
-        {view.lava &&
-          (() => {
-            const hex = board.hexes[view.lava.hex];
-            const v = board.vertices[view.lava.vertex];
-            if (!hex || !v) return null;
-            const [hx, hy] = [hex.x * S, hex.y * S];
+    <div ref={ref} className={'board' + (zoom > 1 ? ' zoomed' : '')} role="img" aria-label="Catan board" {...handlers}>
+      <div ref={staticLayer} className="board-static">
+        <svg className="board-svg" viewBox={viewBox} preserveAspectRatio="xMidYMid meet" aria-hidden="true" focusable="false">
+          <BoardStatic board={board} geo={geo} showPips={showPips} />
+        </svg>
+      </div>
+      <svg className="board-svg board-overlay" viewBox={viewBox} preserveAspectRatio="xMidYMid meet" aria-hidden="true" focusable="false">
+        <OverlayDefs />
+        <g ref={layer} className="board-layer">
+          {/* roads */}
+          {roads.map((r) => {
+            const col = view.players[r.owner].color;
+            const dark = isVeryDark(col);
+            const outline = dark ? pieceEdge(col) : shade(col, -0.8);
             return (
-              <g className="lava" pointerEvents="none">
-                <line x1={hx} y1={hy - 0.43 * S} x2={v.x * S} y2={v.y * S} stroke="#ff5a1f" strokeWidth="7" strokeLinecap="round" opacity=".75" />
-                <line x1={hx} y1={hy - 0.43 * S} x2={v.x * S} y2={v.y * S} stroke="#ffd25e" strokeWidth="2.6" strokeLinecap="round" />
-                <circle cx={v.x * S} cy={v.y * S} r="17" fill="#ff5a1f" opacity=".55" />
-                <circle cx={v.x * S} cy={v.y * S} r="10" fill="#ffd25e" opacity=".9" />
-                <title>{`Lava flowed down corner ${view.lava.die}`}</title>
+              <g key={r.edge}>
+                <linearGradient id={`road-${r.edge}`} gradientUnits="userSpaceOnUse" x1={r.across[0]} y1={r.across[1]} x2={r.across[2]} y2={r.across[3]}>
+                  <stop offset="0" stopColor={shade(col, 0.45)} />
+                  <stop offset="0.28" stopColor={shade(col, 0.12)} />
+                  <stop offset="0.55" stopColor={shade(col, dark ? 0.1 : -0.3)} />
+                  <stop offset="0.82" stopColor={col} />
+                  <stop offset="1" stopColor={shade(col, 0.35)} />
+                </linearGradient>
+                <polygon
+                  points={r.pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')}
+                  fill={`url(#road-${r.edge})`}
+                  stroke={outline}
+                  strokeWidth={ROAD_LINE}
+                  strokeLinejoin="miter"
+                  strokeMiterlimit={4}
+                />
+                {board.edges[r.edge].bridge && <BridgePlanks a={board.vertices[board.edges[r.edge].a]} b={board.vertices[board.edges[r.edge].b]} stroke={outline} />}
               </g>
+            );
+          })}
+
+          {/* buildings */}
+          {board.vertices.map((v, i) => {
+            const b = view.buildings[i];
+            if (!b) return null;
+            return (
+              <g key={i} transform={`translate(${v.x * S} ${v.y * S - 6}) scale(${b.city ? 1.12 : 1.22})`} filter="url(#drop)">
+                <PieceShape color={view.players[b.owner].color} city={b.city} />
+              </g>
+            );
+          })}
+
+          {/* settlements on loan after lava hit a city: a crack in the base */}
+          {view.damaged.map((i) => {
+            const v = board.vertices[i];
+            return (
+              <g key={`dm${i}`} className="damaged" transform={`translate(${v.x * S} ${v.y * S + 9})`}>
+                <path d="M-9 0 L-3 -3 L0 2 L4 -2 L9 1" fill="none" stroke="#ff5a1f" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+                <title>Damaged by lava: repair this settlement (upgrade it to a city) before building another city</title>
+              </g>
+            );
+          })}
+
+          {/* where the last lava flow ran */}
+          {view.lava &&
+            (() => {
+              const hex = board.hexes[view.lava.hex];
+              const v = board.vertices[view.lava.vertex];
+              if (!hex || !v) return null;
+              const [hx, hy] = [hex.x * S, hex.y * S];
+              return (
+                <g className="lava" pointerEvents="none">
+                  <line x1={hx} y1={hy - 0.43 * S} x2={v.x * S} y2={v.y * S} stroke="#ff5a1f" strokeWidth="7" strokeLinecap="round" opacity=".75" />
+                  <line x1={hx} y1={hy - 0.43 * S} x2={v.x * S} y2={v.y * S} stroke="#ffd25e" strokeWidth="2.6" strokeLinecap="round" />
+                  <circle cx={v.x * S} cy={v.y * S} r="17" fill="#ff5a1f" opacity=".55" />
+                  <circle cx={v.x * S} cy={v.y * S} r="10" fill="#ffd25e" opacity=".9" />
+                  <title>{`Lava flowed down corner ${view.lava.die}`}</title>
+                </g>
+              );
+            })()}
+
+          {/* robber */}
+          {(() => {
+            const h = board.hexes[view.robber];
+            return (
+              <>
+              {h.terrain === 'desert' && <DesertRobberShade x={h.x * S - 0.5 * S} y={h.y * S + 0.06 * S + 20} uid="bo" />}
+              <g transform={`translate(${h.x * S - 0.5 * S} ${h.y * S + 0.06 * S}) scale(1.18)`} className="robber" filter="url(#drop)">
+                <ellipse cx="0" cy="17" rx="15" ry="5" fill="rgba(0,0,0,.25)" />
+                <path d="M-14 14 C-16 4 -9 -2 0 -2 C9 -2 16 4 14 14 C10 19 -10 19 -14 14Z" fill="url(#rob)" stroke="#7b7b7b" strokeWidth="1.8" strokeLinejoin="round" />
+                <ellipse cx="0" cy="-11" rx="11" ry="10.5" fill="url(#rob)" stroke="#7b7b7b" strokeWidth="1.8" />
+                <path d="M-6 -16 Q-3 -19.5 1 -19" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" opacity=".7" />
+                <path d="M-9 6 Q-10 11 -6 14" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" opacity=".45" />
+              </g>
+              </>
             );
           })()}
 
-        {/* robber */}
-        {(() => {
-          const h = board.hexes[view.robber];
-          return (
-            <>
-            {h.terrain === 'desert' && <DesertRobberShade x={h.x * S - 0.5 * S} y={h.y * S + 0.06 * S + 20} uid="bd" />}
-            <g transform={`translate(${h.x * S - 0.5 * S} ${h.y * S + 0.06 * S}) scale(1.18)`} className="robber" filter="url(#drop)">
-              <ellipse cx="0" cy="17" rx="15" ry="5" fill="rgba(0,0,0,.25)" />
-              <path d="M-14 14 C-16 4 -9 -2 0 -2 C9 -2 16 4 14 14 C10 19 -10 19 -14 14Z" fill="url(#rob)" stroke="#7b7b7b" strokeWidth="1.8" strokeLinejoin="round" />
-              <ellipse cx="0" cy="-11" rx="11" ry="10.5" fill="url(#rob)" stroke="#7b7b7b" strokeWidth="1.8" />
-              <path d="M-6 -16 Q-3 -19.5 1 -19" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" opacity=".7" />
-              <path d="M-9 6 Q-10 11 -6 14" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" opacity=".45" />
-            </g>
-            </>
-          );
-        })()}
-
-        {/* click targets */}
-        {hexTargets.map((i) => {
-          const h = board.hexes[i];
-          return <polygon key={`h${i}`} points={hexPoints(h.x * S, h.y * S, S * 0.9)} className="target-hex" onClick={() => onHex(i)} />;
-        })}
-        {edgeTargets.map((i) => {
-          const e = board.edges[i];
-          const a = board.vertices[e.a];
-          const b = board.vertices[e.b];
-          return (
-            <g key={`e${i}`} className="target-edge" onClick={() => onEdge(i)}>
-              <line x1={a.x * S} y1={a.y * S} x2={b.x * S} y2={b.y * S} className="target-edge-hit" />
-              <line x1={a.x * S} y1={a.y * S} x2={b.x * S} y2={b.y * S} className="target-edge-show" />
-            </g>
-          );
-        })}
-        {vertexTargets.map((i) => {
-          const v = board.vertices[i];
-          return (
-            <g key={`v${i}`} className="target-vertex" onClick={() => onVertex(i)}>
-              <circle cx={v.x * S} cy={v.y * S} r={TARGET_R * grow} className="target-vertex-hit" />
-              <circle cx={v.x * S} cy={v.y * S} r={14 * grow} className="target-vertex-show" />
-            </g>
-          );
-        })}
-      </g>
-    </svg>
+          {/* click targets */}
+          {hexTargets.map((i) => {
+            const h = board.hexes[i];
+            return <polygon key={`h${i}`} points={hexPoints(h.x * S, h.y * S, S * 0.9)} className="target-hex" onClick={() => onHex(i)} />;
+          })}
+          {edgeTargets.map((i) => {
+            const e = board.edges[i];
+            const a = board.vertices[e.a];
+            const b = board.vertices[e.b];
+            return (
+              <g key={`e${i}`} className="target-edge" onClick={() => onEdge(i)}>
+                <line x1={a.x * S} y1={a.y * S} x2={b.x * S} y2={b.y * S} className="target-edge-hit" />
+                <line x1={a.x * S} y1={a.y * S} x2={b.x * S} y2={b.y * S} className="target-edge-show" />
+              </g>
+            );
+          })}
+          {vertexTargets.map((i) => {
+            const v = board.vertices[i];
+            return (
+              <g key={`v${i}`} className="target-vertex" onClick={() => onVertex(i)}>
+                <circle cx={v.x * S} cy={v.y * S} r={TARGET_R * grow} className="target-vertex-hit" />
+                <circle cx={v.x * S} cy={v.y * S} r={14 * grow} className="target-vertex-show" />
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+    </div>
   );
 }

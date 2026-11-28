@@ -5,6 +5,7 @@ use crate::log_event::LogEvent;
 use crate::map_def::{MapDef, MapError, MAX_PLAYERS, MIN_PLAYERS, PlayerRange};
 use crate::types::{DevCard, DevHand, PerPlayer, PlayerId, Res};
 use rand::seq::SliceRandom;
+use std::cell::RefCell;
 use std::time::{Duration, Instant};
 #[cfg(test)]
 use super::PALETTE;
@@ -154,6 +155,7 @@ impl Game {
             trades: vec![],
             next_trade_id: 0,
             longest_road_holder: None,
+            road_lens: RefCell::new(None),
             largest_army_holder: None,
             winner: None,
             log: vec![],

@@ -21,10 +21,22 @@ impl Game {
     }
 
     /// `longest_road` for every player. The search enumerates every trail in a road network, so it
-    /// is the costly part of a view; callers that need all the lengths (the award check, and a
-    /// broadcast that builds one view per seat) compute them once with this and share the result.
+    /// is the costly part of a view. The result is kept until the roads or buildings change, so the
+    /// award check and the broadcast that follows it share one search.
     pub fn longest_roads(&self) -> PerPlayer<usize> {
-        PerPlayer::from_fn(self.n, |p| self.longest_road(p))
+        if let Some(lens) = &*self.road_lens.borrow() {
+            return lens.clone();
+        }
+        let lens = PerPlayer::from_fn(self.n, |p| self.longest_road(p));
+        *self.road_lens.borrow_mut() = Some(lens.clone());
+        lens
+    }
+
+    /// Forget the kept lengths. Whatever puts a road or a building on the board, or takes one off, must call
+    /// this (`update_longest_road` does, and so do `place_road` and the setup settlement, which don't call it).
+    /// A city replacing its own settlement needn't: only a building's owner matters to a road, not its size.
+    pub(super) fn invalidate_road_lens(&mut self) {
+        *self.road_lens.get_mut() = None;
     }
 
     fn road_dfs(&self, p: PlayerId, v: usize, used: &mut Vec<bool>, len: usize, arrived: bool) -> usize {
@@ -82,7 +94,9 @@ impl Game {
         }
     }
 
+    /// Called after every change to the roads or buildings, so it starts from a fresh search.
     pub(super) fn update_longest_road(&mut self) {
+        self.invalidate_road_lens();
         let lens = self.longest_roads();
         let max = *lens.iter().max().unwrap();
         let top: Vec<PlayerId> = PlayerId::range(self.n).filter(|&p| lens[p] == max).collect();

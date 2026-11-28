@@ -17,13 +17,16 @@ interface NumSpec {
   show?: (n: number) => string;
   /** Text of the standard button when it isn't just the number. */
   standardLabel?: string;
+  /** The row only matters (and is only shown) while this holds, e.g. the cap of a limit that is switched off. */
+  when?: (s: Settings) => boolean;
 }
 
 interface ToggleSpec {
   kind: 'toggle';
-  key: 'friendly_robber' | 'bridges';
+  key: 'friendly_robber' | 'bridges' | 'variable_discard' | 'alchemist';
   label: string;
   hint?: string;
+  when?: (s: Settings) => boolean;
 }
 
 type Spec = NumSpec | ToggleSpec;
@@ -86,6 +89,17 @@ const GROUPS: { title: string; items: Spec[] }[] = [
     ],
   },
   {
+    title: 'Development cards',
+    items: [
+      {
+        kind: 'toggle',
+        key: 'alchemist',
+        label: 'Alchemist card',
+        hint: 'Adds 2 Alchemists to a 25-card deck (12 knights instead of 14). Play one at the start of your turn, before rolling, to choose what each die shows. Not used in Speed mode.',
+      },
+    ],
+  },
+  {
     title: 'Setup',
     items: [
       {
@@ -103,6 +117,32 @@ const GROUPS: { title: string; items: Spec[] }[] = [
     title: 'Robber and trading',
     items: [
       { kind: 'num', key: 'discard_limit', label: 'Card discard limit', unit: 'cards', min: 1, max: 50},
+      {
+        kind: 'toggle',
+        key: 'variable_discard',
+        label: 'Variable discard limit',
+        hint: 'The discard limit starts at the setting above and rises by 1 every few rolls of the dice, up to a cap.',
+      },
+      {
+        kind: 'num',
+        key: 'discard_step_rolls',
+        label: 'Rolls per increase',
+        unit: 'rolls',
+        min: 1,
+        max: 99,
+        hint: 'Every roll of the dice counts, whoever rolls it.',
+        when: (s) => s.variable_discard,
+      },
+      {
+        kind: 'num',
+        key: 'discard_limit_cap',
+        label: 'Discard limit cap',
+        unit: 'cards',
+        min: 1,
+        max: 50,
+        hint: 'The limit stops rising here.',
+        when: (s) => s.variable_discard,
+      },
       {
         kind: 'toggle',
         key: 'friendly_robber',
@@ -125,6 +165,9 @@ const GROUPS: { title: string; items: Spec[] }[] = [
 
 const ALL: Spec[] = GROUPS.flatMap((g) => g.items);
 
+/** Whether a rule is relevant under these settings (the cap of a limit that isn't variable is not). */
+const visible = (sp: Spec, s: Settings): boolean => !sp.when || sp.when(s);
+
 /** Allowed range for a number setting, given the others (e.g. every starting settlement needs a road). */
 function limits(spec: NumSpec, s: Settings): [number, number] {
   switch (spec.key) {
@@ -133,6 +176,11 @@ function limits(spec: NumSpec, s: Settings): [number, number] {
     case 'max_roads':
     case 'max_settlements':
       return [Math.max(spec.min, s.starting_settlements), spec.max];
+    // A rising limit can't start above the cap it rises to (`Settings::validate`).
+    case 'discard_limit':
+      return [spec.min, s.variable_discard ? Math.min(spec.max, s.discard_limit_cap) : spec.max];
+    case 'discard_limit_cap':
+      return [Math.max(spec.min, s.discard_limit), spec.max];
     default:
       return [spec.min, spec.max];
   }
@@ -143,19 +191,19 @@ const shown = (spec: NumSpec, n: number): string => (spec.show ? spec.show(n) : 
 /** What changes if the rules go from `from` to `to`, as one short phrase per rule, in the order the rules
  *  panel lists them ("Points to win 12", "Friendly robber on"). Empty if they are the same. */
 export function settingsDifferences(from: Settings, to: Settings): string[] {
-  return ALL.filter((sp) => from[sp.key] !== to[sp.key]).map((sp) =>
+  return ALL.filter((sp) => visible(sp, to) && from[sp.key] !== to[sp.key]).map((sp) =>
     sp.kind === 'toggle' ? `${sp.label} ${to[sp.key] ? 'on' : 'off'}` : `${sp.label} ${shown(sp, to[sp.key])}`,
   );
 }
 
 /** How many settings differ from the standard. */
 export function changedCount(s: Settings): number {
-  return ALL.filter((sp) => s[sp.key] !== DEFAULT_SETTINGS[sp.key]).length;
+  return ALL.filter((sp) => visible(sp, s) && s[sp.key] !== DEFAULT_SETTINGS[sp.key]).length;
 }
 
 /** Label and value for every setting, for showing the rules of a running game. */
 export function settingsRows(s: Settings): { label: string; value: string; changed: boolean }[] {
-  return ALL.map((sp) => ({
+  return ALL.filter((sp) => visible(sp, s)).map((sp) => ({
     label: sp.label,
     value: sp.kind === 'toggle' ? (s[sp.key] ? 'On' : 'Off') : shown(sp, s[sp.key]),
     changed: s[sp.key] !== DEFAULT_SETTINGS[sp.key],
@@ -318,7 +366,7 @@ export function GameSettingsPanel({
       {GROUPS.map((g) => (
         <section key={g.title} className="gs-group" aria-label={g.title}>
           <h3>{g.title}</h3>
-          {g.items.map((sp) =>
+          {g.items.filter((sp) => visible(sp, settings)).map((sp) =>
             sp.kind === 'num' ? (
               <NumberRow key={sp.key} spec={sp} s={settings} onChange={onChange} />
             ) : (

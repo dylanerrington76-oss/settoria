@@ -1,11 +1,18 @@
 /** Resource bundle indexed [brick, lumber, ore, grain, wool]. */
 export type Res = [number, number, number, number, number];
 
+/** Development cards by kind, indexed like `DEV_NAMES`. */
+export type DevCounts = [number, number, number, number, number, number];
+
 export const RES_NAMES = ['brick', 'lumber', 'ore', 'grain', 'wool'] as const;
 export const RES_ICONS = ['🧱', '🪵', '⛰️', '🌾', '🐑'] as const;
 export const RES_IDX = [0, 1, 2, 3, 4] as const;
 
-export const DEV_NAMES = ['Knight', 'Road Building', 'Year of Plenty', 'Monopoly', 'Victory Point'] as const;
+export const DEV_NAMES = ['Knight', 'Road Building', 'Year of Plenty', 'Monopoly', 'Victory Point', 'Alchemist'] as const;
+/** Index of the Alchemist, the one card played at the start of a turn instead of rolling. */
+export const DEV_ALCHEMIST = 5;
+/** Index of the Victory Point card, which is never played. */
+export const DEV_VICTORY_POINT = 4;
 export const devHelp = (kind: number, vpCardPoints: number): string =>
   [
     'Move the robber and steal a card',
@@ -13,6 +20,7 @@ export const devHelp = (kind: number, vpCardPoints: number): string =>
     'Take any 2 resources from the bank',
     'Take every card of one resource from the other players',
     `Worth ${vpCardPoints} point${vpCardPoints === 1 ? '' : 's'}. Stays hidden until you win`,
+    'Play it at the start of your turn, before rolling: you choose what each die shows',
   ][kind];
 
 export const COST_ROAD: Res = [1, 1, 0, 0, 0];
@@ -131,6 +139,14 @@ export interface MapInfo {
 export interface Settings {
   points_to_win: number;
   discard_limit: number;
+  /** The discard limit rises as the game goes on: by 1 after every `discard_step_rolls` rolls, up to `discard_limit_cap`. */
+  variable_discard: boolean;
+  /** Rolls of the dice (all players') between two rises of the discard limit. */
+  discard_step_rolls: number;
+  /** The highest the discard limit can climb to. */
+  discard_limit_cap: number;
+  /** The Alchemist development card is in the deck (never in Speed mode). */
+  alchemist: boolean;
   friendly_robber: boolean;
   bridges: boolean;
   max_roads: number;
@@ -158,6 +174,10 @@ export const SPEED_ROLL_SECS = 20;
 export const DEFAULT_SETTINGS: Settings = {
   points_to_win: 15,
   discard_limit: 7,
+  variable_discard: false,
+  discard_step_rolls: 10,
+  discard_limit_cap: 10,
+  alchemist: false,
   friendly_robber: false,
   bridges: false,
   max_roads: 15,
@@ -414,6 +434,7 @@ export type LogEvent =
   | { type: 'played_road_building'; player: number }
   | { type: 'played_year_of_plenty'; player: number; first: number; second: number }
   | { type: 'played_monopoly'; player: number; resource: number; taken: number }
+  | { type: 'played_alchemist'; player: number }
   | { type: 'bank_trade'; player: number; give: number; get: number; ratio: number }
   | { type: 'trade_proposed'; player: number }
   | { type: 'trade_completed'; player: number; with: number }
@@ -442,8 +463,9 @@ export interface GameView {
   roads: (number | null)[];
   players: PlayerView[];
   hand: Res;
-  dev: [number, number, number, number, number];
-  dev_new: [number, number, number, number, number];
+  /** Development cards held, indexed like `DEV_NAMES`. */
+  dev: DevCounts;
+  dev_new: DevCounts;
   vp_you: number;
   bank: Res;
   deck_left: number;
@@ -478,6 +500,8 @@ export interface GameView {
   timer_mode: TimerMode;
   timer: TimerView | null;
   settings: Settings;
+  /** The discard limit a 7 is held to right now (`settings.discard_limit` is where it starts). */
+  discard_limit_now: number;
 }
 /** The view as it comes over the socket: the same, but with the board in its short form. */
 export type WireGameView = Omit<GameView, 'board'> & { board: WireBoard };

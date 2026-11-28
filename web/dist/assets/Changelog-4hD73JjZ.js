@@ -1,6 +1,11 @@
-import{j as e,l as i,r as c}from"./index-CHc4ZhYW.js";const h=`### Changelog
+import{j as e,l as i,r as c}from"./index-Bz48qCD3.js";const h=`### Changelog
 
 All notable changes to this project will be documented in this file.
+
+### [v2026.11.26]
+refactored game.rs
+- added the Alchemist development card (optional in the lobby): played before the roll to choose what each die shows. With it on, a 25-card deck has 12 Knights and 2 Alchemists
+- added a variable discard limit setting: the limit rises by 1 every chosen number of rolls, up to a chosen cap
 
 ### [v2026.11.25]
 HTTP optimizations

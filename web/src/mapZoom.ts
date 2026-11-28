@@ -4,10 +4,14 @@ import type { MouseEvent as ReactMouseEvent, MutableRefObject, PointerEvent as R
 /**
  * Zoom and pan for the board, and only the board.
  *
- * The board is one `<svg>` whose `viewBox` fits the whole map into the space it is given. Zooming never touches that
- * `<svg>` (or anything outside it): everything drawn on the board sits in one `<g>` (the "layer"), and zooming is a
- * `translate(x y) scale(k)` on that group. The `<svg>` clips what falls outside it, so a zoomed-in map stays inside
- * its own area and the buttons, dice, hand and sidebar around it are exactly as they were.
+ * The board is a host `<div>` holding two stacked `<svg>`s with the same `viewBox`, which fits the whole map into the
+ * space it is given: the static map (tiles, numbers, harbours, shoreline; thousands of elements on a big map) in its own
+ * `<div>` that the browser keeps as a GPU layer (`will-change: transform`), and a small overlay for what changes during
+ * a game (roads, buildings, robber, click targets). Zooming never touches anything outside the host: the overlay's
+ * content sits in one `<g>` (the "layer") moved by `translate(x y) scale(k)`, and the static `<div>` is moved by the
+ * same view as a pixel transform (`pixelView`), so the big map is only ever re-composited while a finger or the wheel is
+ * at work, never re-drawn. The host clips what falls outside it, so a zoomed-in map stays inside its own area and the
+ * buttons, dice, hand and sidebar around it are exactly as they were.
  *
  * Coordinates: "board units" are the units the board is drawn in (what its `viewBox` is measured in). A point `p` on the
  * board is drawn at `(x, y) + k * p`, in the same units. The part of the `<svg>` you can see is a rectangle in these
@@ -26,6 +30,8 @@ const EDGE_PAD_PX = 56;
 /** How far a pointer has to travel before a press counts as a drag rather than a click (touch fingers wobble more than a mouse). */
 const SLOP_MOUSE = 5;
 const SLOP_TOUCH = 10;
+/** How long after the zoom last changed the static map is re-drawn at its new size, so that it is sharp and not a stretched picture. */
+const SETTLE_MS = 200;
 
 export interface Box {
   x0: number;
@@ -101,6 +107,25 @@ export function clampView(view: View, box: Box, vp: Viewport, pad = EDGE_PAD_PX 
   };
 }
 
+/**
+ * The same view as a transform in screen pixels, for an HTML element that is as big as the `<svg>` and holds the board
+ * drawn unzoomed (`transform-origin: 0 0`). A board point `u` is at `s * (u - c) + (W/2, H/2)` in that element (`s` and
+ * the element's size `W` x `H` as in `viewportOf`, `c` the middle of `box`) and at `s * (x + k * u - c) + (W/2, H/2)` in
+ * the view `(k, x, y)`, so the element needs `scale(k)` and the shift returned here. Before the first measurement
+ * (`size` null) there is nothing to convert with, and the view is returned as it is.
+ */
+export function pixelView(view: View, box: Box, size: Size | null): View {
+  if (!size || size.w <= 0 || size.h <= 0) return view;
+  const { s } = viewportOf(box, size);
+  const cx = box.x0 + box.w / 2;
+  const cy = box.y0 + box.h / 2;
+  return {
+    k: view.k,
+    x: (size.w / 2) * (1 - view.k) + s * (view.x + (view.k - 1) * cx),
+    y: (size.h / 2) * (1 - view.k) + s * (view.y + (view.k - 1) * cy),
+  };
+}
+
 export type ZoomEdge = 'min' | 'max' | 'mid';
 export const edgeOf = (k: number): ZoomEdge => (k <= MIN_ZOOM + 1e-6 ? 'min' : k >= MAX_ZOOM - 1e-6 ? 'max' : 'mid');
 
@@ -130,7 +155,8 @@ const idle = (): Gesture => ({ mode: 'none', moved: false, sx: 0, sy: 0, lx: 0, 
 const reducedMotion = (): boolean => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 interface Options {
-  svg: RefObject<SVGSVGElement>;
+  /** The element that is as big as the board's space and holds both layers: it is measured, listens for the wheel and the pointers, and clips. */
+  host: RefObject<HTMLElement>;
   box: Box;
   size: Size | null;
   /** A new value puts the board back as it was (a different board was dealt). */
@@ -141,13 +167,15 @@ interface Options {
 }
 
 /**
- * Makes the board zoomable and draggable. Put `layer` on the `<g>` that holds everything on the board and spread
- * `handlers` on the `<svg>`. The layer is moved straight in the DOM while a finger or the wheel is at work, not through
- * React state, so the (large) board is not redrawn at every pointer event; `zoom` (rounded) is the only state, and the
- * board uses it to keep its click targets a good size.
+ * Makes the board zoomable and draggable. Put `layer` on the `<g>` that holds what is drawn over the map, `staticLayer`
+ * on the `<div>` that holds the map itself, and spread `handlers` on the host. Both are moved straight in the DOM while a
+ * finger or the wheel is at work, not through React state, so the (large) board is not redrawn at every pointer event;
+ * `zoom` (rounded) is the only state, and the board uses it to keep its click targets a good size.
  */
-export function useMapZoom({ svg, box, size, resetKey, api, onEdge }: Options) {
+export function useMapZoom({ host, box, size, resetKey, api, onEdge }: Options) {
   const layer = useRef<SVGGElement>(null);
+  const staticLayer = useRef<HTMLDivElement>(null);
+  const settle = useRef<{ timer: number | undefined; k: number }>({ timer: undefined, k: 1 });
   const view = useRef<View>(HOME);
   const live = useRef({ box, size, onEdge });
   live.current = { box, size, onEdge };
@@ -159,12 +187,29 @@ export function useMapZoom({ svg, box, size, resetKey, api, onEdge }: Options) {
     const vp = viewportOf(b, sz);
     const v = clampView(next, b, vp);
     view.current = v;
+    const transition = smooth && !reducedMotion() ? 'transform 0.18s ease-out' : 'none';
+    // back at home exactly (not "nearly": zooming out leaves float dust) the layers need no transform at all
+    const home = Math.abs(v.k - 1) < 1e-9 && Math.abs(v.x) < 1e-6 && Math.abs(v.y) < 1e-6;
     const g = layer.current;
     if (g) {
-      g.style.transition = smooth && !reducedMotion() ? 'transform 0.18s ease-out' : 'none';
-      // back at home exactly (not "nearly": zooming out leaves float dust) the layer needs no transform at all
-      const home = Math.abs(v.k - 1) < 1e-9 && Math.abs(v.x) < 1e-6 && Math.abs(v.y) < 1e-6;
+      g.style.transition = transition;
       g.style.transform = home ? '' : `translate(${v.x}px, ${v.y}px) scale(${v.k})`;
+    }
+    const m = staticLayer.current;
+    if (m) {
+      const p = pixelView(v, b, sz);
+      m.style.transition = transition;
+      m.style.transform = home ? '' : `translate(${p.x}px, ${p.y}px) scale(${p.k})`;
+      // The browser keeps a `will-change: transform` layer as the picture it drew at the old zoom and only stretches it, so a
+      // moment after the zoom last changed it is told to draw the map again at its new size (panning never needs this).
+      if (v.k !== settle.current.k) {
+        settle.current.k = v.k;
+        window.clearTimeout(settle.current.timer);
+        settle.current.timer = window.setTimeout(() => {
+          m.style.willChange = 'auto';
+          requestAnimationFrame(() => requestAnimationFrame(() => (m.style.willChange = ''))); // '' gives it back to the stylesheet (`will-change: transform`)
+        }, SETTLE_MS);
+      }
     }
     setZoom(Math.round(v.k * 20) / 20);
     const edge = edgeOf(v.k);
@@ -174,15 +219,15 @@ export function useMapZoom({ svg, box, size, resetKey, api, onEdge }: Options) {
     }
   }, []);
 
-  /** The board point under the screen point, or the middle of the board when the `<svg>` isn't there. */
+  /** The board point under the screen point, or the middle of the board when the host isn't there. */
   const boardPoint = useCallback(
     (clientX: number, clientY: number) => {
       const { box: b, size: sz } = live.current;
-      const el = svg.current;
+      const el = host.current;
       if (!el) return { x: b.x0 + b.w / 2, y: b.y0 + b.h / 2 };
       return toBoard(b, viewportOf(b, sz), el.getBoundingClientRect(), clientX, clientY);
     },
-    [svg],
+    [host],
   );
 
   const zoomAtClient = useCallback(
@@ -196,6 +241,8 @@ export function useMapZoom({ svg, box, size, resetKey, api, onEdge }: Options) {
   // a new board starts unzoomed; a resized window keeps the zoom but may need the board pulled back into view
   useLayoutEffect(() => apply(HOME), [apply, resetKey]);
   useLayoutEffect(() => apply(view.current), [apply, size?.w, size?.h]);
+
+  useEffect(() => () => window.clearTimeout(settle.current.timer), []);
 
   // the + and − buttons zoom about the middle of what is showing
   useEffect(() => {
@@ -212,7 +259,7 @@ export function useMapZoom({ svg, box, size, resetKey, api, onEdge }: Options) {
 
   // The mouse wheel. React's onWheel is passive and can't stop the page scrolling, so this is a native listener.
   useEffect(() => {
-    const el = svg.current;
+    const el = host.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -226,7 +273,7 @@ export function useMapZoom({ svg, box, size, resetKey, api, onEdge }: Options) {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [svg, zoomAtClient]);
+  }, [host, zoomAtClient]);
 
   // Dragging with one pointer pans; two fingers pinch (and pan while they do).
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -249,7 +296,7 @@ export function useMapZoom({ svg, box, size, resetKey, api, onEdge }: Options) {
     }
   };
 
-  const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+  const onPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
     if (e.pointerType === 'mouse') {
       if (e.button !== 0) return;
       pointers.current.clear(); // a mouse has one pointer; drop one left over from a release outside the window
@@ -270,7 +317,7 @@ export function useMapZoom({ svg, box, size, resetKey, api, onEdge }: Options) {
     }
   };
 
-  const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
+  const onPointerMove = (e: ReactPointerEvent<HTMLElement>) => {
     const p = pointers.current.get(e.pointerId);
     if (!p) return;
     p.x = e.clientX;
@@ -298,7 +345,7 @@ export function useMapZoom({ svg, box, size, resetKey, api, onEdge }: Options) {
     }
   };
 
-  const onPointerEnd = (e: ReactPointerEvent<SVGSVGElement>) => {
+  const onPointerEnd = (e: ReactPointerEvent<HTMLElement>) => {
     if (!pointers.current.delete(e.pointerId)) return;
     release(e.currentTarget, e.pointerId);
     const g = gesture.current;
@@ -312,7 +359,7 @@ export function useMapZoom({ svg, box, size, resetKey, api, onEdge }: Options) {
     }
   };
 
-  const onClickCapture = (e: ReactMouseEvent<SVGSVGElement>) => {
+  const onClickCapture = (e: ReactMouseEvent<HTMLElement>) => {
     if (!swallowClick.current) return;
     swallowClick.current = false;
     e.stopPropagation();
@@ -321,6 +368,7 @@ export function useMapZoom({ svg, box, size, resetKey, api, onEdge }: Options) {
 
   return {
     layer,
+    staticLayer,
     /** The board's zoom, to 1/20, for sizing click targets. */
     zoom,
     handlers: { onPointerDown, onPointerMove, onPointerUp: onPointerEnd, onPointerCancel: onPointerEnd, onClickCapture },

@@ -63,7 +63,8 @@ Points and limits can be changed per game in the [settings](#game-settings).
    if only one player is owed it, they get what is left.
 3. **A 7** produces nothing. Instead:
    1. Every player holding **more than 7** cards discards half of them, rounded down (the limit is a
-      [setting](#game-settings)). Everyone discards at once.
+      [setting](#game-settings), and can rise during the game: see **Variable discard limit**). Everyone discards at
+      once.
    2. The player who rolled moves the robber to a different hex. With **Friendly Robber** on, the robber can't go
       onto a hex that touches a protected player (see below), unless every hex does.
    3. They steal one random card from a player with a building on that hex (they choose who if there are several).
@@ -72,6 +73,12 @@ Points and limits can be changed per game in the [settings](#game-settings).
 
 A volcano or gold hex whose number is rolled adds a pick step after production, see below. A Knight played
 mid-turn runs the same robber steps as a 7 does, without the discard.
+
+**Variable discard limit** (off by default): the discard limit starts at the *Card discard limit* and goes up by 1 after
+every *x* rolls of the dice (every roll of the game counts, whoever rolls it, and so does a roll made with an Alchemist),
+until it reaches the *cap*. A 7 is held to the limit set by the rolls before it: with a start of 7, *x* of 10 and a cap of
+9, rolls 1 to 10 use 7, rolls 11 to 20 use 8, and every roll after that 9. Both *x* and the cap are settings, and the cap
+can't be lower than the start. The game screen shows the limit in force.
 
 **Friendly Robber** (off by default) protects every other player who has no more visible points than the number every
 player has once setup is over (starting settlements times points per settlement, so 2 with the defaults). Hidden
@@ -180,7 +187,8 @@ Building, Year of Plenty and Monopoly. A different deck size (a [setting](#game-
 
 - You may play **one development card per turn**, never one you bought this turn, and Victory Point cards are not played
   (they count automatically).
-- Any card may be played before the roll or in the main phase, but playing one withdraws all your open trade offers.
+- Any card may be played before the roll or in the main phase (except the Alchemist, which is only played before the roll),
+  but playing one withdraws all your open trade offers.
 - **Knight**: move the robber and steal, like a 7. Knights count towards Largest Army.
 - **Road Building**: place two roads for free (fewer if you have fewer pieces left). You can't play it with nowhere to
   build. Roads you don't place when the turn clock runs out are placed at random.
@@ -188,6 +196,14 @@ Building, Year of Plenty and Monopoly. A different deck size (a [setting](#game-
 - **Monopoly**: name a resource and take every card of it from every other player (unless
   [locked](#trading)).
 - **Victory Point**: worth 1 point (a [setting](#game-settings)), hidden from everyone else until the game is over.
+- **Alchemist** (only with the *Alchemist card* [setting](#game-settings), off by default): play it at the start of your
+  turn, before you roll, **instead of rolling**. You choose what each of the two dice shows (1 to 6 each) and the roll
+  carries out exactly as if the dice had fallen that way: production, or the 7 sequence if you name a 7. It counts as a
+  roll (for the variable discard limit and the dice statistics) and as your one development card for the turn. It can't
+  be played in Speed mode, which has no turns, so the deck has none there.
+
+With the Alchemist on, the deck swaps two Knights for two Alchemists: in a 25-card deck 12 Knights, 5 Victory Points, 2 each
+of Road Building, Year of Plenty, Monopoly and Alchemist. Other deck sizes keep these proportions.
 
 ## Awards and winning
 
@@ -229,6 +245,10 @@ opens a game with a line for everything that is not the standard value.
 |---|---|---|---|
 | Points to win (`points_to_win`) | 15 | 3 to 99 | Points needed to win, checked on your own turn. |
 | Card discard limit (`discard_limit`) | 7 | 1 to 50 | After a 7, players holding more than this discard half. |
+| Variable discard limit (`variable_discard`) | off | on/off | The discard limit rises as the game goes on (see [A turn](#a-turn)). |
+| Rolls per increase (`discard_step_rolls`) | 10 | 1 to 99 | With the variable limit: rolls of the dice between two rises of 1. |
+| Discard limit cap (`discard_limit_cap`) | 10 | 1 to 50 | With the variable limit: the highest it can reach. Not below the discard limit. |
+| Alchemist card (`alchemist`) | off | on/off | Adds the [Alchemist](#development-cards) to the deck (not in Speed mode). |
 | Friendly Robber (`friendly_robber`) | off | on/off | The robber can't go onto hexes next to players with few points (see [A turn](#a-turn)). |
 | Bridges (`bridges`) | off | on/off | Players may build [bridges](#bridges). |
 | Max roads (`max_roads`) | 15 | 1 to 50 | Road pieces per player (bridges use them too). |

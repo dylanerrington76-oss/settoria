@@ -1,7 +1,7 @@
 // Tests for the maths in src/mapZoom.ts: zooming about a point, keeping the board in view, and the limits.
 // Usage: node scripts/map-zoom-test.mjs        (from web/; needs a Node that runs .ts files, 22.18 or later)
 import assert from 'node:assert/strict';
-import { HOME, MAX_ZOOM, MIN_ZOOM, clampView, clampZoom, edgeOf, toBoard, viewportOf, zoomAt } from '../src/mapZoom.ts';
+import { HOME, MAX_ZOOM, MIN_ZOOM, clampView, clampZoom, edgeOf, pixelView, toBoard, viewportOf, zoomAt } from '../src/mapZoom.ts';
 
 let passed = 0;
 const test = (name, fn) => {
@@ -88,6 +88,29 @@ test('zooming out always ends back at home', () => {
   near(v.k, 1);
   near(v.x, 0);
   near(v.y, 0);
+});
+test('the pixel view puts the map layer where the board layer puts the same point', () => {
+  // an off-centre box, in an element of another shape, so letterboxing and the box's own offset are both in play
+  const b = { x0: -120, y0: 40, w: 900, h: 700 };
+  const size = { w: 1300, h: 600 };
+  const vp = viewportOf(b, size);
+  const cx = b.x0 + b.w / 2;
+  const cy = b.y0 + b.h / 2;
+  for (const view of [HOME, { k: 2.5, x: -310, y: 95 }, { k: 8, x: 400, y: -1200 }]) {
+    const p = pixelView(view, b, size);
+    near(p.k, view.k);
+    for (const [ux, uy] of [[0, 0], [-120, 40], [780, 740], [333, 217]]) {
+      // where the point is in an element that has the board drawn unzoomed, as pixels from its corner
+      const lx = size.w / 2 + vp.s * (ux - cx);
+      const ly = size.h / 2 + vp.s * (uy - cy);
+      // where the board layer puts it: (x, y) + k * u in board units, then the same units-to-pixels mapping
+      const wantX = size.w / 2 + vp.s * (view.x + view.k * ux - cx);
+      const wantY = size.h / 2 + vp.s * (view.y + view.k * uy - cy);
+      near(p.k * lx + p.x, wantX, `x of (${ux}, ${uy}) at ${view.k}x`);
+      near(p.k * ly + p.y, wantY, `y of (${ux}, ${uy}) at ${view.k}x`);
+    }
+  }
+  assert.deepEqual(pixelView({ k: 2, x: 5, y: 6 }, b, null), { k: 2, x: 5, y: 6 }, 'unmeasured: nothing to convert with');
 });
 test('edges are reported at the limits', () => {
   assert.equal(edgeOf(1), 'min');

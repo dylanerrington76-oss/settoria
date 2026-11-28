@@ -5,9 +5,9 @@
 //! that an index is below 5. A `Res` (a bundle of cards) is indexed by `Resource`, and anything kept per seat
 //! lives in a `PerPlayer`, which is indexed by `PlayerId` and cannot be indexed by a bare number.
 //!
-//! On the wire nothing changed: a `Resource` or a `DevCard` is its index (0 to 4), a `Res` or a `DevHand` is
-//! an array of five numbers in index order, and a `PlayerId` is the seat number. The browser, which only ever
-//! sees numbers, is unaffected.
+//! On the wire nothing changed: a `Resource` is its index (0 to 4) and a `DevCard` its index (0 to 5), a `Res` is
+//! an array of five numbers and a `DevHand` an array of six, in index order, and a `PlayerId` is the seat
+//! number. The browser only ever sees numbers.
 
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -17,10 +17,11 @@ use std::ops::{Index, IndexMut};
 // Resource and development card kinds
 // ----------------------------------------------------------------------
 
-/// Defines an enum of five kinds that serializes as its index, and a `$map` type holding one value per kind
+/// Defines an enum of `$n` kinds that serializes as its index, and a `$map` type holding one value per kind
 /// that is indexed by the enum (and by nothing else).
-macro_rules! five_kinds {
+macro_rules! kinds {
     (
+        $n:literal;
         $(#[$kind_meta:meta])* $kind:ident { $($variant:ident => $name:literal),+ $(,)? }
         $(#[$map_meta:meta])* $map:ident
     ) => {
@@ -33,8 +34,11 @@ macro_rules! five_kinds {
         // The resources and the development cards get the same API; each uses a different part of it.
         #[allow(dead_code)]
         impl $kind {
+            /// How many kinds there are.
+            pub const COUNT: usize = $n;
+
             /// Every kind, in index order.
-            pub const ALL: [$kind; 5] = [$($kind::$variant),+];
+            pub const ALL: [$kind; $n] = [$($kind::$variant),+];
 
             /// Position in `ALL`, which is also what the browser calls it.
             pub fn index(self) -> usize {
@@ -73,7 +77,7 @@ macro_rules! five_kinds {
         $(#[$map_meta])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
         #[serde(transparent)]
-        pub struct $map<T>(pub [T; 5]);
+        pub struct $map<T>(pub [T; $n]);
 
         impl<T> Index<$kind> for $map<T> {
             type Output = T;
@@ -105,27 +109,31 @@ macro_rules! five_kinds {
         impl<T: Copy> $map<T> {
             /// The same value for every kind.
             pub fn splat(value: T) -> Self {
-                $map([value; 5])
+                $map([value; $n])
             }
         }
     };
 }
 
-five_kinds! {
+kinds! {
+    5;
     /// One of the five resources.
     Resource { Brick => "brick", Lumber => "lumber", Ore => "ore", Grain => "grain", Wool => "wool" }
     /// One value of type `T` for each resource.
     ByResource
 }
 
-five_kinds! {
-    /// One of the five kinds of development card.
+kinds! {
+    6;
+    /// One of the six kinds of development card. The Alchemist is last, so the other five keep the numbers they
+    /// always had; it is only in the deck when `Settings::alchemist` is on.
     DevCard {
         Knight => "knight",
         RoadBuilding => "road building",
         YearOfPlenty => "year of plenty",
         Monopoly => "monopoly",
         VictoryPoint => "victory point",
+        Alchemist => "alchemist",
     }
     /// One value of type `T` for each kind of development card.
     ByDev
@@ -157,7 +165,7 @@ impl Res {
 pub type DevHand = ByDev<u8>;
 
 impl DevHand {
-    pub const ZERO: DevHand = ByDev([0; 5]);
+    pub const ZERO: DevHand = ByDev([0; DevCard::COUNT]);
 
     /// How many cards in all.
     pub fn total(&self) -> u32 {
@@ -302,14 +310,16 @@ mod tests {
     #[test]
     fn kinds_have_a_fixed_order_and_round_trip_through_their_index() {
         assert_eq!(Resource::ALL.map(Resource::index), [0, 1, 2, 3, 4]);
-        assert_eq!(DevCard::ALL.map(DevCard::index), [0, 1, 2, 3, 4]);
+        assert_eq!(DevCard::ALL.map(DevCard::index), [0, 1, 2, 3, 4, 5]);
         for r in Resource::ALL {
             assert_eq!(Resource::from_index(r.index()), Some(r));
         }
         assert_eq!(Resource::from_index(5), None);
-        assert_eq!(DevCard::from_index(5), None);
+        assert_eq!(DevCard::from_index(5), Some(DevCard::Alchemist));
+        assert_eq!(DevCard::from_index(6), None);
         assert_eq!(Resource::Brick.name(), "brick");
         assert_eq!(DevCard::VictoryPoint.name(), "victory point");
+        assert_eq!(DevCard::Alchemist.name(), "alchemist");
     }
 
     #[test]
@@ -317,7 +327,7 @@ mod tests {
         assert_eq!(serde_json::to_value(Resource::Ore).unwrap(), json!(2));
         assert_eq!(serde_json::to_value(DevCard::Monopoly).unwrap(), json!(3));
         assert_eq!(serde_json::to_value(Res::new(1, 0, 2, 0, 3)).unwrap(), json!([1, 0, 2, 0, 3]));
-        assert_eq!(serde_json::to_value(DevHand::ZERO).unwrap(), json!([0, 0, 0, 0, 0]));
+        assert_eq!(serde_json::to_value(DevHand::ZERO).unwrap(), json!([0, 0, 0, 0, 0, 0]));
         assert_eq!(serde_json::to_value(PlayerId::new(3)).unwrap(), json!(3));
         let seats: PerPlayer<u8> = vec![7, 8].into();
         assert_eq!(serde_json::to_value(&seats).unwrap(), json!([7, 8]));
@@ -331,8 +341,12 @@ mod tests {
         // Out of range, negative, fractional, wrong shape: none of these can become a Resource.
         for bad in [json!(5), json!(-1), json!(1.5), json!("brick"), json!(null), json!(u64::MAX)] {
             assert!(serde_json::from_value::<Resource>(bad.clone()).is_err(), "{bad} was accepted");
+        }
+        // The same for a development card, which has one kind more.
+        for bad in [json!(6), json!(-1), json!(1.5), json!("knight"), json!(null), json!(u64::MAX)] {
             assert!(serde_json::from_value::<DevCard>(bad.clone()).is_err(), "{bad} was accepted");
         }
+        assert_eq!(serde_json::from_value::<DevCard>(json!(5)).unwrap(), DevCard::Alchemist);
         assert!(serde_json::from_value::<Res>(json!([1, 2, 3])).is_err());
         assert!(serde_json::from_value::<Res>(json!([1, 2, 3, 4, 5, 6])).is_err());
     }

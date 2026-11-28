@@ -22,8 +22,8 @@ small HTTP routes. The code is `src/main.rs` (messages and the room), `src/game/
 - Every message is a JSON object in a WebSocket text frame, tagged by `"type"` in `snake_case`.
 - **Resources** are numbers: 0 brick, 1 lumber, 2 ore, 3 grain, 4 wool. A **bundle** of resources (a hand, a cost, an
   offer) is a 5-element array in that order, e.g. `[1, 0, 2, 0, 0]`.
-- **Development cards** are indexed 0 Knight, 1 Road Building, 2 Year of Plenty, 3 Monopoly, 4 Victory Point; a hand of
-  them is a 5-element array.
+- **Development cards** are indexed 0 Knight, 1 Road Building, 2 Year of Plenty, 3 Monopoly, 4 Victory Point, 5 Alchemist; a hand of
+  them is a 6-element array.
 - **Seats and players** are numbers: a seat's index in the lobby's `players`. The host is always seat 0.
 - **Corners** ("vertices"), **sides** ("edges") and **hexes** are numbers too, numbered as described in
   [The board on the wire](#the-board-on-the-wire).
@@ -43,7 +43,7 @@ There are two kinds of message: **room messages** (joining and the lobby) and **
 | `{"type":"resync"}` | a seat that is sent patches | Asks for the whole view again (see [Patches](#patches)). |
 | `{"type":"set_timer","mode"}` | host, lobby | `mode` is `very_fast`, `fast`, `normal` or `slow`. |
 | `{"type":"set_map","map"}` | host, lobby | `map` is the `id` of a map in the lobby's `maps`. An id the server doesn't have is refused and nothing changes. |
-| `{"type":"set_settings","settings"}` | host, lobby | `settings` is the whole object listed in [Rules](Rules.md#game-settings), using the field names of `Settings` in `src/game/settings.rs`: `points_to_win`, `discard_limit`, `friendly_robber`, `bridges`, `max_roads`, `max_cities`, `max_settlements`, `dev_cards`, `resource_max`, `settlement_points`, `city_points`, `longest_road_points`, `largest_army_points`, `vp_card_points`, `longest_road_min`, `largest_army_min`, `starting_settlements`, `bank_ratio`, `speed`. An invalid object is refused with an `error`, and the lobby is sent again with the previous values. |
+| `{"type":"set_settings","settings"}` | host, lobby | `settings` is the whole object listed in [Rules](Rules.md#game-settings), using the field names of `Settings` in `src/game/settings.rs`: `points_to_win`, `discard_limit`, `variable_discard`, `discard_step_rolls`, `discard_limit_cap`, `alchemist`, `friendly_robber`, `bridges`, `max_roads`, `max_cities`, `max_settlements`, `dev_cards`, `resource_max`, `settlement_points`, `city_points`, `longest_road_points`, `largest_army_points`, `vp_card_points`, `longest_road_min`, `largest_army_min`, `starting_settlements`, `bank_ratio`, `speed`. An invalid object is refused with an `error`, and the lobby is sent again with the previous values. |
 | `{"type":"add_bot"}` | host, lobby | Seats a computer player, named at random from Bender, C-3PO, Multivac, Skynet, AM, Hal 9000, Data, GLaDOS, Marvin, WOPR, Johnny 5 and Bishop, never one a person or another bot at the table already has. Refused when 12 seats are taken, bots included. |
 | `{"type":"remove_bot","seat"}` | host, lobby | `seat` is the bot's index in the lobby's `players`; refused if that seat is not a bot. |
 | `{"type":"start"}` | host, lobby | Starts the game. Refused with fewer than 2 seats, when the map doesn't take that many players, when the starting settlements won't fit, or when the map can't be dealt. |
@@ -62,6 +62,7 @@ All of these are sent after joining, in a game, and are checked against the rule
 | `build_road{edge}`, `build_bridge{edge}`, `build_settlement{vertex}`, `build_city{vertex}` | Build. In setup, a settlement and then a road. `build_bridge` needs a game with bridges and an `edge` that is a bridge site. |
 | `buy_dev` | Buy a development card. |
 | `play_knight`, `play_road_building`, `play_year_of_plenty{a,b}`, `play_monopoly{resource}` | Play a card (`a` and `b` are resources). |
+| `play_alchemist{dice}` | Play an Alchemist before the roll, in place of it: `dice` is `[first, second]`, each 1 to 6, and the roll is carried out with them. Refused after the roll, in Speed mode, or with a die outside 1 to 6. |
 | `move_robber{hex}`, `steal{victim}` | The robber steps after a 7 or a Knight. |
 | `discard{cards}` | Discard a bundle of exactly the required number of cards. |
 | `volcano_pick{resource}` | One free resource, by the player whose pick it is at a volcano or gold field. |
@@ -118,6 +119,7 @@ If everyone leaves, the server forgets the game, the timer mode, the settings an
 | `hand`, `dev`, `dev_new`, `vp_you` | Your cards: resources, development cards you can play, development cards bought this turn (not yet playable), and your points including hidden ones. |
 | `bank`, `deck_left`, `dev_played` | What the bank holds; cards left in the deck; whether you played a development card this turn. |
 | `ratios`, `harbours` | Your bank ratio for each resource; the harbours you own (`any`, and `resource` for each), which the trade dialog needs, because you can't be offered bank-rate deals those give. |
+| `discard_limit_now` | The discard limit a 7 is held to right now (the 7 being dealt with in the discard phase, otherwise the next one). `settings.discard_limit` is where it starts; it is higher with `settings.variable_discard`. |
 | `monopoly_locked` | For each resource, whether the Monopoly lock applies to you now (all false when it isn't your turn). |
 | `setup_needs` | In setup, `"settlement"` or `"road"`: what the current player must place. |
 | `discards`, `steal_candidates` | Who must discard, and how many; who the robber's owner may steal from. |
@@ -162,7 +164,7 @@ for the whole game, and a view carries the newest 25. They are defined in `src/l
 | Game and setup | `game_started`, `map_chosen{map,name}` (not for Standard), `custom_rules{changes}`, `turn_order{order}`, `setup_ended_early`, `setup_complete` |
 | Dice and the robber | `rolled{player,dice}`, `dice_rolled{dice}` (Speed mode: the server's roll), `collected{player,cards}`, `bank_short{resource}`, `must_discard{limit}`, `discarded{player,count}`, `robber_must_move`, `robber_moved{player}`, `stole{player,victim}` |
 | Volcano and gold | `volcano_picked{player,resource}`, `volcano_blocked{hex}`, `volcano_bank_empty`, `lava_flow{hex,die,effect,owner}` with `effect` of `nothing`, `destroyed` or `demoted`, `gold_picked{player,resource}`, `gold_blocked{hex}` |
-| Building and cards | `placed_settlement`, `built_settlement`, `built_road`, `built_bridge`, `built_city`, `bought_dev_card`, `played_knight`, `played_road_building`, `played_year_of_plenty{player,first,second}`, `played_monopoly{player,resource,taken}` |
+| Building and cards | `placed_settlement`, `built_settlement`, `built_road`, `built_bridge`, `built_city`, `bought_dev_card`, `played_knight`, `played_road_building`, `played_year_of_plenty{player,first,second}`, `played_monopoly{player,resource,taken}`, `played_alchemist{player}` (followed by the `rolled` event with the chosen dice) |
 | Trading | `bank_trade{player,give,get,ratio}`, `trade_proposed{player}`, `trade_completed{player,with}` |
 | Awards and the end | `longest_road_taken{player,roads}`, `longest_road_lost`, `largest_army_taken{player,knights}`, `won{player,points}` |
 | Timers | `timed_out{player,kind}` (`kind` as in the [timer](#the-timer)) |

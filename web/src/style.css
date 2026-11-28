@@ -162,10 +162,16 @@ label { display: block; margin: 14px 0 4px; color: var(--mute); font-size: 13px;
 .table { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 350px; }
 .left { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .stage { flex: 1; position: relative; min-height: 0; padding: 4px 0 0; }
-.board { width: 100%; height: 100%; display: block; touch-action: none; -webkit-user-select: none; user-select: none; }
-/* zoom and pan: a zoomed-in map can be dragged (the <svg> clips whatever falls outside it, so nothing else on the screen is affected) */
+.board { position: relative; overflow: hidden; width: 100%; height: 100%; display: block; touch-action: none; -webkit-user-select: none; user-select: none; }
+/* The board is two stacked <svg>s: the map (its own layer, below) and the pieces and click targets over it (see Board.tsx). */
+.board-svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+/* The map is kept by the browser as one picture that zoom and pan only move (useMapZoom sets the transform), so a big map is never re-drawn while it is dragged. Nothing in it is clickable. */
+.board-static { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; will-change: transform; pointer-events: none; }
+/* zoom and pan: a zoomed-in map can be dragged (the board clips whatever falls outside it, so nothing else on the screen is affected) */
 .board.zoomed { cursor: grab; }
 .board[data-panning] { cursor: grabbing; }
+/* while dragging, nothing on the board can be hovered or clicked (pointer capture keeps the events on the board), so the browser skips hit-testing and :hover updates for the thousands of elements in the layer */
+.board[data-panning] .board-layer { pointer-events: none; }
 
 .tools { position: absolute; left: 12px; top: 8px; display: flex; flex-direction: column; gap: 14px; z-index: 3; }
 .tool { background: none; border: 0; padding: 2px; border-radius: 8px; line-height: 0; filter: drop-shadow(0 1px 1px rgba(0, 40, 80, 0.5)); }
@@ -188,8 +194,8 @@ label { display: block; margin: 14px 0 4px; color: var(--mute); font-size: 13px;
   .table.rail-collapsed .rail { transition: visibility 0s 0.22s; }
 }
 
-.bottom { display: grid; grid-template-columns: minmax(0, 1fr) 510px; grid-template-rows: 40px 80px; gap: 5px 6px; padding: 0 2px 3px 3px; }
-.status { grid-column: 2; display: flex; justify-content: flex-end; gap: 6px; }
+.bottom { display: grid; grid-template-columns: minmax(0, 1fr) 510px; grid-template-rows: 80px; gap: 0 6px; padding: 5px 2px 3px 3px; }
+.status { display: flex; justify-content: flex-end; gap: 6px; }
 .pill {
   height: 40px; display: flex; align-items: center; background: var(--cream); border: 0; border-radius: 5px;
   font-size: 16px; color: #333; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12); padding: 0 6px; min-width: 0;
@@ -211,9 +217,9 @@ button.pill:hover:not(:disabled) { filter: brightness(1.04); }
 }
 @keyframes timer-pulse { 50% { filter: brightness(1.18); } }
 
-.handwrap { grid-column: 1; grid-row: 2; position: relative; min-width: 0; }
+.handwrap { grid-column: 1; grid-row: 1; position: relative; min-width: 0; }
 .handbar { height: 80px; background: var(--cream); border-radius: 5px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12); padding: 0 12px; display: flex; align-items: center; overflow-x: auto; overflow-y: hidden; }
-.actions { grid-column: 2; grid-row: 2; display: grid; grid-template-columns: repeat(6, 80px); gap: 6px; }
+.actions { grid-column: 2; grid-row: 1; display: grid; grid-template-columns: repeat(6, 80px); gap: 6px; }
 
 .bottom.with-bridge { grid-template-columns: minmax(0, 1fr) 596px; }
 .actions.with-bridge { grid-template-columns: repeat(7, 80px); }
@@ -239,11 +245,18 @@ button.pill:hover:not(:disabled) { filter: brightness(1.04); }
 
 /* ---------- dice ---------- */
 .dice { position: absolute; right: 12px; bottom: 16px; display: flex; gap: 10px; background: none; border: 0; padding: 0; z-index: 2; }
-/* The dice get a gutter of their own at the right of the stage (stacked, so it stays narrow) and the board is drawn beside it,
-   so they can never cover a hex that a settlement or road has to go on. */
-.stage { --die: 90px; --dice-gutter: calc(var(--die) + 12px + 10px); }
-.stage > .board { width: calc(100% - var(--dice-gutter)); }
-.stage > .dice { flex-direction: column; }
+/* The dice, the status box ("Your Turn") and the clock float over the bottom right of the map, like the tool buttons at the top left:
+   the map is drawn full size underneath them. The container lets clicks and drags through to the map; only its three controls catch them. */
+.stage { --die: 90px; }
+.hud { position: absolute; right: 12px; bottom: 12px; z-index: 3; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; pointer-events: none; }
+.hud > * { pointer-events: auto; }
+.hud .dice { position: static; flex-direction: column; }
+.hud .pill { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 30, 60, 0.35); }
+/* The bars that ask you to steal or pick a resource sit at the bottom centre of the map: keep them clear of the floating controls. */
+@media (min-width: 961px) {
+  .stage > .steal-bar, .stage > .volcano-bar { left: calc((100% - 350px) / 2); }
+  .stage > .volcano-bar { width: min(460px, calc(100% - 374px)); }
+}
 .dice:disabled { opacity: 1; cursor: default; }
 .die { width: 90px; height: 90px; border-radius: 14px; border: 3px solid #b3c4ce; background: linear-gradient(#f6fcff, #dcebf3); box-shadow: 0 3px 8px rgba(0, 30, 60, 0.35); padding: 3px; }
 .die-svg { width: 100%; height: 100%; }
@@ -424,6 +437,11 @@ button.stack:disabled { opacity: 1; cursor: default; }
 .res-btn { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; font-size: 12px; }
 .res-btn .mini-card { width: 28px; height: 38px; vertical-align: top; margin: 0; }
 .res-btn small { color: var(--mute); font-size: 11px; }
+.alchemist-die { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.alchemist-label { width: 44px; font-size: 12px; color: var(--mute); }
+.alchemist-pick { width: 40px; height: 40px; padding: 2px; border-radius: 8px; background: #fff; border: 2px solid transparent; }
+.alchemist-pick.selected { border-color: #2d6a4f; box-shadow: 0 0 0 2px rgba(45, 106, 79, 0.25); }
+.alchemist-pick .die-svg { width: 100%; height: 100%; display: block; }
 .picked { min-height: 28px; margin-top: 12px; font-weight: 600; }
 .cost-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid rgba(0, 0, 0, 0.1); }
 .ratios { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; font-size: 13px; font-weight: 700; }
@@ -474,11 +492,11 @@ button.stack:disabled { opacity: 1; cursor: default; }
   html, body, #root { height: auto; }
   .table { height: auto; min-height: 100%; grid-template-columns: minmax(0, 1fr); }
   .stage { height: 78vw; min-height: 320px; max-height: 72vh; flex: none; }
-  .bottom { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 6px; }
-  .status, .actions, .handwrap { grid-column: 1; grid-row: auto; }
-  .status { order: 1; }
-  .handwrap { order: 2; }
-  .actions { order: 3; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .bottom { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 6px; padding-top: 0; }
+  /* the floating controls are taller than the bottom of the map is, so the steal and volcano bars ride above them */
+  .stage > .steal-bar, .stage > .volcano-bar { bottom: 190px; }
+  .actions, .handwrap { grid-column: 1; grid-row: auto; }
+  .actions { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .bottom.with-bridge { grid-template-columns: minmax(0, 1fr); }
   .actions.with-bridge { grid-template-columns: repeat(7, minmax(0, 1fr)); }
   .bottom.speed, .bottom.speed.with-bridge { grid-template-columns: minmax(0, 1fr); }

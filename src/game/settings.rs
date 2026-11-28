@@ -6,8 +6,12 @@ use serde::{Deserialize, Serialize};
 /// Most starting settlements (summed over all players) the board can reasonably hold.
 /// (Twelve players with the most starting settlements each, 5, is 60.)
 pub const MAX_SETUP_SETTLEMENTS_TOTAL: usize = 60;
-/// Standard development deck: knights, road building, year of plenty, monopoly, victory points.
-const STANDARD_DECK: ByDev<usize> = ByDev([14, 2, 2, 2, 5]);
+/// Standard development deck: knights, road building, year of plenty, monopoly, victory points, alchemists.
+/// (In a 25-card deck: 14 knights, 2 + 2 + 2, 5 victory points and no alchemist.)
+const STANDARD_DECK: ByDev<usize> = ByDev([14, 2, 2, 2, 5, 0]);
+/// The mix when `Settings::alchemist` is on: two Alchemists take their place from the knights, which go from
+/// 14 to 12 (in a 25-card deck: 12 knights, 2 + 2 + 2, 5 victory points and 2 alchemists).
+const ALCHEMIST_DECK: ByDev<usize> = ByDev([12, 2, 2, 2, 5, 2]);
 
 /// The rules of one game. `Settings::default()` is the host's starting point.
 /// Every field has a range (see `validate`), and the server refuses anything outside it.
@@ -16,8 +20,20 @@ const STANDARD_DECK: ByDev<usize> = ByDev([14, 2, 2, 2, 5]);
 pub struct Settings {
     /// Points needed to win, checked on the player's own turn.
     pub points_to_win: u8,
-    /// After a 7, players holding MORE than this many cards discard half.
+    /// After a 7, players holding MORE than this many cards discard half. With `variable_discard` this is
+    /// the limit the game starts with.
     pub discard_limit: u8,
+    /// The discard limit rises as the game goes on: by one after every `discard_step_rolls` rolls of the dice
+    /// (every roll of the game counts, whoever rolls it), until it reaches `discard_limit_cap`.
+    pub variable_discard: bool,
+    /// How many rolls of the dice make the discard limit rise by one (only with `variable_discard`).
+    pub discard_step_rolls: u8,
+    /// The highest the discard limit can climb to (only with `variable_discard`; never below `discard_limit`).
+    pub discard_limit_cap: u8,
+    /// The Alchemist development card is in the deck. Played at the start of a turn, before the dice are
+    /// rolled, it lets its owner choose what the dice show. See `Game::do_alchemist`. Not played in Speed
+    /// mode, which has no turns to start, so the deck is the standard one there whatever this says.
+    pub alchemist: bool,
     /// Robber can't go on a hex touching a player with `Settings::friendly_robber_max_vp` or fewer points
     /// (what every player starts the game with, so it follows the starting settlements setting).
     pub friendly_robber: bool,
@@ -56,6 +72,10 @@ impl Default for Settings {
         Settings {
             points_to_win: 15,
             discard_limit: 7,
+            variable_discard: false,
+            discard_step_rolls: 10,
+            discard_limit_cap: 10,
+            alchemist: false,
             friendly_robber: false,
             bridges: false,
             max_roads: 15,
@@ -97,6 +117,11 @@ impl Settings {
     pub fn validate(&self) -> Result<(), String> {
         in_range("Points to win", self.points_to_win, 3, 99)?;
         in_range("Card discard limit", self.discard_limit, 1, 50)?;
+        in_range("Rolls per discard limit increase", self.discard_step_rolls, 1, 99)?;
+        in_range("Discard limit cap", self.discard_limit_cap, 1, 50)?;
+        if self.variable_discard && self.discard_limit_cap < self.discard_limit {
+            return Err("The discard limit cap can't be lower than the starting discard limit".into());
+        }
         in_range("Max roads", self.max_roads, 1, 50)?;
         in_range("Max cities", self.max_cities, 0, 20)?;
         in_range("Max settlements", self.max_settlements, 1, 20)?;
@@ -118,6 +143,18 @@ impl Settings {
             return Err("Each starting settlement needs a road, so max roads can't be lower".into());
         }
         Ok(())
+    }
+
+    /// The discard limit for a 7 that is rolled after `rolls_before` earlier rolls of the dice. Without
+    /// `variable_discard` that is always `discard_limit`; with it, the limit starts there, goes up by one after
+    /// every `discard_step_rolls` rolls, and stops at `discard_limit_cap`.
+    pub fn discard_limit_after(&self, rolls_before: u32) -> u8 {
+        if !self.variable_discard {
+            return self.discard_limit;
+        }
+        let rises = rolls_before / u32::from(self.discard_step_rolls.max(1));
+        let cap = u32::from(self.discard_limit_cap.max(self.discard_limit));
+        (u32::from(self.discard_limit) + rises).min(cap) as u8
     }
 
     /// The rules a table of `players` actually plays with. With more than 4 players the shared bank and the
@@ -181,6 +218,15 @@ impl Settings {
         if self.bank_ratio != d.bank_ratio {
             v.push(format!("bank trade {}:1", self.bank_ratio));
         }
+        if self.variable_discard {
+            v.push(format!(
+                "variable discard limit (up 1 every {} rolls, to at most {})",
+                self.discard_step_rolls, self.discard_limit_cap
+            ));
+        }
+        if self.alchemist {
+            v.push("Alchemist card".to_string());
+        }
         if self.friendly_robber {
             v.push("Friendly Robber on".to_string());
         }
@@ -193,15 +239,22 @@ impl Settings {
         v
     }
 
-    /// Cards of each kind in a deck of `dev_cards`: the standard 14/2/2/2/5 mix scaled
-    /// to the chosen size (largest-remainder rounding, so the total is exact).
+    /// Whether the deck holds Alchemists: the setting is on and the game has turns (Speed mode has none, so a
+    /// card played "before the roll" would mean nothing there).
+    pub fn alchemist_in_deck(&self) -> bool {
+        self.alchemist && !self.speed
+    }
+
+    /// Cards of each kind in a deck of `dev_cards`: the standard 14/2/2/2/5 mix (12/2/2/2/5 and two Alchemists with
+    /// `alchemist` on) scaled to the chosen size (largest-remainder rounding, so the total is exact).
     pub fn deck_counts(&self) -> ByDev<usize> {
-        let total: usize = STANDARD_DECK.0.iter().sum();
+        let mix = if self.alchemist_in_deck() { &ALCHEMIST_DECK } else { &STANDARD_DECK };
+        let total: usize = mix.0.iter().sum();
         let want = self.dev_cards as usize;
-        let mut counts = ByDev::from_fn(|c| STANDARD_DECK[c] * want / total);
+        let mut counts = ByDev::from_fn(|c| mix[c] * want / total);
         let left = want - counts.0.iter().sum::<usize>();
         let mut order = DevCard::ALL;
-        order.sort_by_key(|&c| std::cmp::Reverse(STANDARD_DECK[c] * want % total));
+        order.sort_by_key(|&c| std::cmp::Reverse(mix[c] * want % total));
         for &c in order.iter().cycle().take(left) {
             counts[c] += 1;
         }

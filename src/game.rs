@@ -59,6 +59,7 @@ use crate::board::Board;
 use crate::log_event::LogEvent;
 use crate::types::{DevCard, PerPlayer, PlayerId, Res, Resource};
 use serde::Serialize;
+use std::cell::RefCell;
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -138,6 +139,10 @@ pub struct Game {
     pub trades: Vec<Trade>,
     next_trade_id: u32,
     pub longest_road_holder: Option<PlayerId>,
+    /// Every player's longest road, kept from the last time `longest_roads` computed it (the search is the
+    /// costly part of a view). `None` means "not computed since the roads or buildings last changed": see
+    /// `Game::invalidate_road_lens` for who must clear it.
+    road_lens: RefCell<Option<PerPlayer<usize>>>,
     pub largest_army_holder: Option<PlayerId>,
     pub winner: Option<PlayerId>,
     pub log: Vec<LogEvent>,

@@ -138,13 +138,13 @@ function base(): GameView {
     you: 0, board, phase: 'setup', current: 0, rolled: false, dice: null, roll_counts: Array(11).fill(0), robber: board.desert,
     buildings: board.vertices.map(() => null), roads: board.edges.map(() => null),
     players: [pv(0, 0, 0, 0, [15, 5, 4]), pv(1, 0, 0, 0, [15, 5, 4]), pv(2, 0, 0, 0, [15, 5, 4]), pv(3, 0, 0, 0, [15, 5, 4])],
-    hand: [0, 0, 0, 0, 0], dev: [0, 0, 0, 0, 0], dev_new: [0, 0, 0, 0, 0], vp_you: 0,
+    hand: [0, 0, 0, 0, 0], dev: [0, 0, 0, 0, 0, 0], dev_new: [0, 0, 0, 0, 0, 0], vp_you: 0,
     bank: [19, 19, 19, 19, 19], deck_left: 25, dev_played: false, ratios: [4, 4, 4, 4, 4],
     harbours: { any: false, resource: [false, false, false, false, false] }, monopoly_locked: [false, false, false, false, false],
     setup_needs: 'settlement', discards: [], steal_candidates: [], volcano: null, lava: null, damaged: [], road_building_left: 0, trades: [],
     legal: { settlements: [], cities: [], roads: [], bridges: [], hexes: [] },
     longest_road_holder: null, largest_army_holder: null, winner: null, log: [], log_start: 0,
-    order: [0, 1, 2, 3], timer_mode: 'normal', settings: DEFAULT_SETTINGS,
+    order: [0, 1, 2, 3], timer_mode: 'normal', settings: DEFAULT_SETTINGS, discard_limit_now: DEFAULT_SETTINGS.discard_limit,
     timer: { kind: 'setup_settlement', player: 0, remaining_ms: 94_000, total_ms: 120_000 },
   };
 }
@@ -199,8 +199,8 @@ export function fixture(name: string): { view: GameView; clock?: number } {
     v.rolled = true;
     v.dice = [6, 4];
     v.hand = [3, 4, 1, 2, 2];
-    v.dev = [1, 0, 0, 0, 1];
-    v.dev_new = [0, 1, 0, 0, 0];
+    v.dev = [1, 0, 0, 0, 1, 0];
+    v.dev_new = [0, 1, 0, 0, 0, 0];
     v.vp_you = 3;
     v.legal.roads = [E([-0.866, -3.5], [-0.866, -2.5])];
     v.legal.settlements = [V(0, -4), V(0, 1)];

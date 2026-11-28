@@ -32,9 +32,14 @@ fn random_games_keep_invariants() {
 
 fn random_settings(rng: &mut impl Rng) -> Settings {
     let start = rng.gen_range(1..=3u8);
+    let discard_limit = rng.gen_range(2..=10);
     let s = Settings {
         points_to_win: rng.gen_range(5..=15),
-        discard_limit: rng.gen_range(2..=10),
+        discard_limit,
+        variable_discard: rng.gen_bool(0.5),
+        discard_step_rolls: rng.gen_range(1..=12),
+        discard_limit_cap: rng.gen_range(discard_limit..=20),
+        alchemist: rng.gen_bool(0.5),
         friendly_robber: rng.gen_bool(0.5),
         bridges: rng.gen_bool(0.5),
         max_roads: rng.gen_range(start.max(3)..=20),

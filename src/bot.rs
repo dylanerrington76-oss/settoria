@@ -73,6 +73,11 @@ const DEV_IDLE_BONUS: i32 = 30;
 const ROLL_SCORE: i32 = 50;
 /// A knight is worth a little even with nothing to rob, because it counts toward Largest Army.
 const KNIGHT_BASE: i32 = 15;
+/// An Alchemist (which names the dice instead of rolling them) is only played when its best number beats the
+/// average roll by at least this much, in half cards, and then is worth `ALCHEMIST_GAIN_SCORE` for each half card of
+/// the difference on top of `ROLL_SCORE`, so it goes before the roll.
+const ALCHEMIST_MIN_GAIN: i32 = 2;
+const ALCHEMIST_GAIN_SCORE: i32 = 5;
 
 /// A bank trade is worth this many tenths of the build it makes affordable, and only for a build worth at least
 /// `TRADE_MIN_TARGET`, so cards are never swapped away for a road that goes nowhere.
@@ -438,8 +443,64 @@ impl<'a> Mind<'a> {
         pick(moves, rng)
     }
 
+    /// What a roll of `total` would hand out, in half cards (a settlement beside a hex is 2, a city 4; a volcano,
+    /// whose lava is a risk, counts half): `(to the bot, to every other player together)`.
+    fn roll_yield(&self, total: u8) -> (i32, i32) {
+        let g = self.g;
+        let (mut mine, mut others) = (0, 0);
+        for (hi, hex) in g.board.hexes.iter().enumerate() {
+            if hex.number != Some(total) || hi == g.robber {
+                continue;
+            }
+            let weight = if hex.terrain.is_volcano() {
+                1
+            } else if hex.terrain.is_gold() || hex.terrain.resource().is_some() {
+                2
+            } else {
+                0
+            };
+            for &v in &hex.vertices {
+                if let Some(b) = g.buildings[v] {
+                    let half_cards = weight * if b.city { 2 } else { 1 };
+                    if b.owner == self.me {
+                        mine += half_cards;
+                    } else {
+                        others += half_cards;
+                    }
+                }
+            }
+        }
+        (mine, others)
+    }
+
+    /// The best numbers for an Alchemist to name, and how much better they are than a roll of the real dice: the
+    /// total that most favours the bot over the average opponent (never a 7, which is left to the real dice),
+    /// compared with what a roll is worth on average. `None` if no total beats the average by enough.
+    fn alchemist_choice(&self) -> Option<(i32, (u8, u8))> {
+        let rivals = (self.g.n as i32 - 1).max(1);
+        let edge = |t: u8| {
+            let (mine, others) = self.roll_yield(t);
+            2 * mine - others / rivals
+        };
+        // 36 ways to throw two dice, and a total of t can be thrown 6 - |t - 7| of them. (A real 7 is worth 0 here.)
+        let average_times_36: i32 = (2..=12u8).filter(|&t| t != 7).map(|t| (6 - (i32::from(t) - 7).abs()) * edge(t)).sum();
+        let (best, total) = (2..=12u8).filter(|&t| t != 7).map(|t| (edge(t), t)).max()?;
+        let gain = (36 * best - average_times_36) / 36;
+        if gain < ALCHEMIST_MIN_GAIN {
+            return None;
+        }
+        let first = total.saturating_sub(6).max(1);
+        Some((ROLL_SCORE + gain * ALCHEMIST_GAIN_SCORE, (first, total - first)))
+    }
+
     fn roll_move<R: Rng>(&self, rng: &mut R) -> Option<Action> {
         let mut moves = vec![(ROLL_SCORE, Action::Roll)];
+        if self.can_play(DevCard::Alchemist) && !self.g.settings.speed {
+            // Instead of rolling: the Alchemist names the dice, and the roll is carried out with them.
+            if let Some((score, dice)) = self.alchemist_choice() {
+                moves.push((score, Action::PlayAlchemist { dice }));
+            }
+        }
         if self.can_play(DevCard::Knight) {
             // Before the roll a knight only goes first if it frees the bot's own production or wins Largest Army.
             moves.push((self.blocked() + self.army_gain(), Action::PlayKnight));
@@ -975,6 +1036,56 @@ mod tests {
         }
     }
 
+    #[test]
+    fn it_names_the_dice_with_an_alchemist_only_when_a_number_clearly_pays_it() {
+        let mut g = Game::new(names(2));
+        flat(&mut g);
+        let hex = (0..g.board.hexes.len()).find(|&h| g.board.hexes[h].terrain.resource().is_some()).unwrap();
+        g.board.hexes[hex].number = Some(8);
+        g.phase = Phase::Roll;
+        g.current = P0;
+        g.rolled = false;
+        g.players[P0].dev[DevCard::Alchemist] = 1;
+        // Nothing built: no number is better than another, so it just rolls.
+        for pick in all_picks(&g, P0, 0) {
+            assert!(matches!(pick, Some(Action::Roll)), "{pick:?}");
+        }
+        // A city on the 8, with nothing else paying beside it and nobody else on it: it names an 8, as two dice
+        // that the rules accept.
+        let corner = g.board.hexes[hex].vertices[0];
+        for h in g.board.vertices[corner].hexes.clone() {
+            if h != hex {
+                g.board.hexes[h].number = None;
+            }
+        }
+        g.buildings[corner] = Some(Building { owner: P0, city: true });
+        g.players[P0].cities_left -= 1;
+        for pick in all_picks(&g, P0, 0) {
+            let Some(Action::PlayAlchemist { dice }) = pick else { panic!("expected the Alchemist, got {pick:?}") };
+            assert_eq!(dice.0 + dice.1, 8);
+        }
+        let Some(Action::PlayAlchemist { dice }) = choose(&g, P0, 0, &mut StdRng::seed_from_u64(1)) else { panic!() };
+        g.apply(P0, Action::PlayAlchemist { dice }).unwrap();
+        assert_eq!(g.dice, Some(dice));
+        assert!(g.players[P0].hand.total() >= 2, "the city was paid");
+        // Without the card the dice are thrown.
+        let mut g = Game::new(names(2));
+        flat(&mut g);
+        g.board.hexes[hex].number = Some(8);
+        for h in g.board.vertices[corner].hexes.clone() {
+            if h != hex {
+                g.board.hexes[h].number = None;
+            }
+        }
+        g.phase = Phase::Roll;
+        g.current = P0;
+        g.rolled = false;
+        g.buildings[corner] = Some(Building { owner: P0, city: true });
+        for pick in all_picks(&g, P0, 0) {
+            assert!(matches!(pick, Some(Action::Roll)), "no card: {pick:?}");
+        }
+    }
+
     // ------------------------------------------------------------------
     // Building
     // ------------------------------------------------------------------
@@ -1319,6 +1430,9 @@ mod tests {
             })
         });
         check_games("earth/4 bridges", || start(4, "earth", Settings { bridges: true, ..Settings::default() }, |_| {}));
+        // The Alchemist (a bigger deck of them, so the bots hold some) and a discard limit that climbs.
+        let alchemy = Settings { alchemist: true, variable_discard: true, discard_step_rolls: 3, discard_limit_cap: 9, dev_cards: 40, ..Settings::default() };
+        check_games("standard/3 alchemist and variable discard", || start(3, "standard", alchemy, |_| {}));
     }
 
     #[test]

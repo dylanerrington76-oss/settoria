@@ -77,6 +77,8 @@ pub enum LogEvent {
     PlayedYearOfPlenty { player: PlayerId, first: Resource, second: Resource },
     /// `taken` is the number of cards the player collected from the others.
     PlayedMonopoly { player: PlayerId, resource: Resource, taken: u32 },
+    /// An Alchemist, played before the roll; the `Rolled` event that follows shows the dice that were chosen.
+    PlayedAlchemist { player: PlayerId },
 
     // ---- trading --------------------------------------------------------------------
     /// `player` handed the bank `ratio` of `give` for one `get`.

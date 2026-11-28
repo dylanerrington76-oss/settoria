@@ -132,6 +132,27 @@ impl Game {
         Ok(())
     }
 
+    /// The Alchemist: played at the start of the turn, before the dice are rolled, it takes the place of the
+    /// roll. Its owner says what each die shows, and the roll is carried out exactly as if the dice had fallen
+    /// that way (production, or the 7 sequence; it counts as a roll for `Game::roll_counts` and the variable
+    /// discard limit). It uses up the turn's one development card like any other.
+    pub(super) fn do_alchemist(&mut self, p: PlayerId, dice: (u8, u8)) -> Result<(), String> {
+        if self.settings.speed {
+            return Err("The Alchemist can't be played in Speed mode: there are no turns to start".into());
+        }
+        if self.phase != Phase::Roll {
+            return Err("The Alchemist is played at the start of your turn, before you roll the dice".into());
+        }
+        self.check_dev_play(p, DevCard::Alchemist)?;
+        if !(1..=6).contains(&dice.0) || !(1..=6).contains(&dice.1) {
+            return Err("Each die must show a number from 1 to 6".into());
+        }
+        self.use_dev(p, DevCard::Alchemist);
+        self.log(LogEvent::PlayedAlchemist { player: p });
+        self.roll_dice_as(dice);
+        Ok(())
+    }
+
     pub(super) fn do_monopoly(&mut self, p: PlayerId, r: Resource) -> Result<(), String> {
         self.check_dev_play(p, DevCard::Monopoly)?;
         if self.monopoly_locked_for(p, r) {
